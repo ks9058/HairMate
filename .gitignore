@@ -1,0 +1,41 @@
+# === Python 관련 ===
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# === 데이터베이스 (SQLite) ===
+# 실제 고객 데이터가 담기는 파일이므로 절대 올리면 안 됩니다.
+*.db
+*.sqlite3
+
+# === 보안 및 환경 설정 ===
+# DB 비번, API Key 등이 들어있는 파일입니다.
+.env
+# 구글 API 인증 시 생성되는 개인 토큰 및 인증 파일입니다.
+token.json
+credentials.json
+client_secret*.json
+
+# === 실행 파일 빌드 (PyInstaller) ===
+# .exe 파일을 만들 때 생성되는 임시 폴더들입니다.
+build/
+dist/
+*.spec
+
+# === IDE 및 OS 설정 ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# === 로그 및 임시 파일 ===
+*.log
+tmp/
+
+venv/
+.env
+__pycache__/
+*.db
