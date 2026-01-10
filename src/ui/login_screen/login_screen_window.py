@@ -43,4 +43,9 @@ class LoginWindow(QMainWindow, Ui_login):
             self.pushButton.setIconSize(QSize(24, 24))
 
     def handle_login(self):
+        # 1. 로그가 잘 찍히는지 확인
         print("로그인 버튼이 눌렸습니다.")
+        
+        # 2. 부모 객체(HairMateApp)의 함수를 호출하여 화면 전환
+        # self.manager가 main.py의 HairMateApp 인스턴스입니다.
+        self.manager.switch_to_menu()

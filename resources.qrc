@@ -1,0 +1,16 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource prefix="/">
+    <file>assets/icons/customer_info_icon.png</file>
+    <file>assets/icons/sales_registration_icon.png</file>
+    <file>assets/icons/sales_statistics_icon.png</file>
+    <file>assets/icons/setting_icon.png</file>
+    <file>assets/icons/exit_icon.png</file>
+    <file>assets/icons/google_logo.png</file>
+
+    <file>assets/icons/customer_info_black_icon.png</file>
+    <file>assets/icons/sales_registration_black_icon.png</file>
+    <file>assets/icons/sales_statistics_black_icon.png</file>
+    <file>assets/icons/setting_black_icon.png</file>
+    <file>assets/icons/exit_black_icon.png</file>
+</qresource>
+</RCC>
