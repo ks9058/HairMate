@@ -50,7 +50,8 @@ class DBManager:
                 display_order INTEGER NOT NULL DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                is_active INTEGER NOT NULL DEFAULT 1
+                is_active INTEGER NOT NULL DEFAULT 1,
+                display_order INTEGER NOT NULL DEFAULT 0
             );
             """)
 
@@ -65,6 +66,7 @@ class DBManager:
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 is_active INTEGER NOT NULL DEFAULT 1,
+                display_order INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (category_id) REFERENCES category(id) ON DELETE RESTRICT
             );
             """)

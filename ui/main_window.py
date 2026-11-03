@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont
 from ui.theme import Colors, Styles, get_icon, load_fonts
 from ui.settings_google_view import SettingsGoogleView
+from ui.settings_category_view import SettingsCategoryView
 
 
 class SidebarButton(QPushButton):
@@ -85,7 +86,7 @@ class MainWindow(QMainWindow):
         main_layout.setSpacing(0)
 
         # -------------------------------------------------------------
-        # 1. 좌측 사이드바 패널 (녹색 영역)
+        # 1. 좌측 사이드바 패널
         # -------------------------------------------------------------
         sidebar = QFrame(self)
         sidebar.setFixedWidth(200)
@@ -96,7 +97,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.setContentsMargins(0, 0, 0, 15)
         sidebar_layout.setSpacing(4)
 
-        # 1.1 상단 로고 헤더 (Kaushan Script 적용 + 하단 하얀색 가로선)
+        # 1.1 로고 헤더
         kaushan_font_family = load_fonts()
         
         logo_container = QFrame(sidebar)
@@ -159,7 +160,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(sidebar, 0)
 
         # -------------------------------------------------------------
-        # 2. 우측 메인 영역 (상단 헤더 + 컨텐츠)
+        # 2. 우측 메인 영역
         # -------------------------------------------------------------
         right_panel = QWidget(self)
         right_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -185,12 +186,12 @@ class MainWindow(QMainWindow):
 
         right_layout.addWidget(header)
 
-        # 2.2 중앙 Stacked Widget 영역
+        # 2.2 중앙 Stacked Widget 영역 및 페이지 등록
         self.stack = QStackedWidget(right_panel)
         self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.stack.setStyleSheet(f"background-color: {Colors.BACKGROUND};")
 
-        # 0 index: 초기 기본 화면 (빈 뷰)
+        # 0 index: 초기 기본 빈 페이지
         self.empty_page = QWidget()
         self.stack.addWidget(self.empty_page)
 
@@ -198,14 +199,19 @@ class MainWindow(QMainWindow):
         self.google_setting_page = SettingsGoogleView()
         self.stack.addWidget(self.google_setting_page)
 
-        # 초기 실행 시 빈 화면 설정
+        # 2 index: 시술 카테고리 관리 화면
+        self.category_setting_page = SettingsCategoryView()
+        self.stack.addWidget(self.category_setting_page)
+
+        # 초기 시작 화면 설정
         self.stack.setCurrentWidget(self.empty_page)
 
         right_layout.addWidget(self.stack)
         main_layout.addWidget(right_panel, 1)
 
-        # 이벤트 및 선택 상태 관리 바인딩
-        self.btn_sub_google.clicked.connect(lambda: self.select_sub_button(self.btn_sub_google))
+        # 모든 서브메뉴 버튼 클릭 이벤트 일괄 바인딩 (클로저 바인딩 처리)
+        for btn in self.sub_buttons:
+            btn.clicked.connect(lambda checked=False, target=btn: self.select_sub_button(target))
 
     def select_main_button(self, target_btn):
         """메인 메뉴 선택 상태 갱신"""
@@ -213,11 +219,12 @@ class MainWindow(QMainWindow):
             btn.setChecked(btn == target_btn)
 
     def select_sub_button(self, target_btn):
-        """서브 메뉴 선택 상태 갱신 및 화면 전환"""
+        """서브 메뉴 선택 상태 갱신 및 대응되는 설정 화면 전환"""
         for btn in self.sub_buttons:
             btn.setChecked(btn == target_btn)
         self.select_main_button(self.btn_setting)
         
-        # '구글 계정 인증' 서브 메뉴를 눌렀을 때만 해당 화면으로 전환
         if target_btn == self.btn_sub_google:
             self.stack.setCurrentWidget(self.google_setting_page)
+        elif target_btn == self.btn_sub_category:
+            self.stack.setCurrentWidget(self.category_setting_page)
