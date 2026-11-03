@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QMimeData, QPoint
 from PySide6.QtGui import QFont, QWheelEvent, QDrag, QPixmap, QPainter, QPainterPath
 from ui.theme import Colors, Styles
-
+from core.db_manager import DBManager
 
 # -------------------------------------------------------------
 # 1. 마우스 스크롤 헬퍼 클래스
@@ -742,9 +742,11 @@ class SettingsCategoryView(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.categories_data = []
-        self.services_map = {}
-        self.current_category = None
+        self.db_manager = DBManager()  # DBManager 객체 연결
+        
+        # DB에서 기존 저장 데이터 로드
+        self.categories_data, self.services_map = self.db_manager.fetch_active_categories_and_services()
+        self.current_category = self.categories_data[0]["name"] if self.categories_data else None
 
         self.category_widgets = []
         self.badge_widgets = []
@@ -1120,12 +1122,22 @@ class SettingsCategoryView(QWidget):
                 self.render_services()
 
     def on_save_all(self):
-        for idx, cat_info in enumerate(self.categories_data):
-            cat_info["display_order"] = idx
-            cat_name = cat_info["name"]
-            services = self.services_map.get(cat_name, [])
-            for s_idx, svc_info in enumerate(services):
-                svc_info["display_order"] = s_idx
+        """'변경 사항 모두 저장' 버튼 클릭 시 SQLite 트랜잭션 일괄 저장 실행"""
+        # 1. DB 매니저 트랜잭션 일괄 저장 호출
+        success, message = self.db_manager.save_all_changes(self.categories_data, self.services_map)
 
-        print("[DB Manager Stub] 카테고리 및 시술 순서(display_order) 반영 최종 저장 완료.")
-        QMessageBox.information(self, "저장 완료", "변경된 순서 및 정보가 성공적으로 저장되었습니다.")
+        if success:
+            QMessageBox.information(self, "저장 완료", message)
+            # 2. 저장 후 상태 초기화 (삭제 목록 제거 및 수정 플래그 해제)
+            self.categories_data, self.services_map = self.db_manager.fetch_active_categories_and_services()
+            if self.categories_data:
+                valid_names = [c["name"] for c in self.categories_data]
+                if self.current_category not in valid_names:
+                    self.current_category = valid_names[0]
+            else:
+                self.current_category = None
+
+            self.render_categories()
+            self.render_services()
+        else:
+            QMessageBox.critical(self, "저장 실패", message)
