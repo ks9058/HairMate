@@ -1,0 +1,16 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Environment Variables & Security
+.env
+
+# Database File
+*.db
+*.sqlite3
+
+# IDE Setup
+.vscode/
+.idea/
