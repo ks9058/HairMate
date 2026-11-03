@@ -6,6 +6,7 @@ from PySide6.QtGui import QFont
 from ui.theme import Colors, Styles, get_icon, load_fonts
 from ui.settings_google_view import SettingsGoogleView
 from ui.settings_category_view import SettingsCategoryView
+from ui.settings_point_view import SettingsPointView  # 1. 포인트 관리 뷰 추가 임포트
 
 
 class SidebarButton(QPushButton):
@@ -199,7 +200,11 @@ class MainWindow(QMainWindow):
         self.google_setting_page = SettingsGoogleView()
         self.stack.addWidget(self.google_setting_page)
 
-        # 2 index: 시술 카테고리 관리 화면
+        # 2 index: 포인트 관리 화면 (추가 등록)
+        self.point_setting_page = SettingsPointView()
+        self.stack.addWidget(self.point_setting_page)
+
+        # 3 index: 시술 카테고리 관리 화면
         self.category_setting_page = SettingsCategoryView()
         self.stack.addWidget(self.category_setting_page)
 
@@ -226,5 +231,8 @@ class MainWindow(QMainWindow):
         
         if target_btn == self.btn_sub_google:
             self.stack.setCurrentWidget(self.google_setting_page)
+        elif target_btn == self.btn_sub_point:
+            self.point_setting_page.load_point_rates()  # 화면 전환 시 최신 DB 설정값 재로드
+            self.stack.setCurrentWidget(self.point_setting_page)
         elif target_btn == self.btn_sub_category:
             self.stack.setCurrentWidget(self.category_setting_page)
