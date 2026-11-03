@@ -236,3 +236,38 @@ class DBManager:
             
         finally:
             conn.close()
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        """settings 테이블에서 지정한 key의 설정값을 조회합니다."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row[0] if row else default
+        except Exception as e:
+            print(f"[DB Error] get_setting: {e}")
+            return default
+        finally:
+            conn.close()
+
+    def set_setting(self, key: str, value: str) -> bool:
+        """settings 테이블에 key-value 설정값을 신규 등록하거나 업데이트합니다."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO settings (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (key, str(value)))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] set_setting: {e}")
+            return False
+        finally:
+            conn.close()
