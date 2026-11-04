@@ -1,12 +1,15 @@
 from datetime import datetime
-from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
-                             QPushButton, QLabel, QStackedWidget, QFrame, QSizePolicy)
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
+    QPushButton, QLabel, QStackedWidget, QFrame, QSizePolicy
+)
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont
 from ui.theme import Colors, Styles, get_icon, load_fonts
 from ui.settings_google_view import SettingsGoogleView
 from ui.settings_category_view import SettingsCategoryView
-from ui.settings_point_view import SettingsPointView  # 1. 포인트 관리 뷰 추가 임포트
+from ui.settings_point_view import SettingsPointView  
+from ui.settings_designer_view import SettingsDesignerView
 
 
 class SidebarButton(QPushButton):
@@ -128,7 +131,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.btn_sales_reg)
         sidebar_layout.addWidget(self.btn_sales_analysis)
 
-        # 1.3 설정 하위 서브메뉴 Container
+        # 1.3 설정 하위 서브메뉴 Container (디자이너 관리 버튼 추가 반영)
         self.sub_menu_container = QWidget(sidebar)
         sub_layout = QVBoxLayout(self.sub_menu_container)
         sub_layout.setContentsMargins(0, 0, 0, 0)
@@ -136,13 +139,18 @@ class MainWindow(QMainWindow):
 
         self.btn_sub_google = SidebarButton("구글 계정 인증", is_sub=True)
         self.btn_sub_point = SidebarButton("포인트 관리", is_sub=True)
+        self.btn_sub_designer = SidebarButton("디자이너 관리", is_sub=True)  # 디자이너 관리 버튼 추가
         self.btn_sub_category = SidebarButton("시술 카테고리 관리", is_sub=True)
         self.btn_sub_backup = SidebarButton("백업", is_sub=True)
         self.btn_sub_restore = SidebarButton("복원", is_sub=True)
 
         self.sub_buttons = [
-            self.btn_sub_google, self.btn_sub_point, 
-            self.btn_sub_category, self.btn_sub_backup, self.btn_sub_restore
+            self.btn_sub_google, 
+            self.btn_sub_point, 
+            self.btn_sub_designer, 
+            self.btn_sub_category, 
+            self.btn_sub_backup, 
+            self.btn_sub_restore
         ]
 
         for btn in self.sub_buttons:
@@ -200,11 +208,15 @@ class MainWindow(QMainWindow):
         self.google_setting_page = SettingsGoogleView()
         self.stack.addWidget(self.google_setting_page)
 
-        # 2 index: 포인트 관리 화면 (추가 등록)
+        # 2 index: 포인트 관리 화면
         self.point_setting_page = SettingsPointView()
         self.stack.addWidget(self.point_setting_page)
 
-        # 3 index: 시술 카테고리 관리 화면
+        # 3 index: 디자이너 관리 화면
+        self.designer_setting_page = SettingsDesignerView()
+        self.stack.addWidget(self.designer_setting_page)
+
+        # 4 index: 시술 카테고리 관리 화면
         self.category_setting_page = SettingsCategoryView()
         self.stack.addWidget(self.category_setting_page)
 
@@ -234,5 +246,8 @@ class MainWindow(QMainWindow):
         elif target_btn == self.btn_sub_point:
             self.point_setting_page.load_point_rates()  # 화면 전환 시 최신 DB 설정값 재로드
             self.stack.setCurrentWidget(self.point_setting_page)
+        elif target_btn == self.btn_sub_designer:
+            self.designer_setting_page.load_designer_list()  # 최신 직원 목록 재로드
+            self.stack.setCurrentWidget(self.designer_setting_page)
         elif target_btn == self.btn_sub_category:
             self.stack.setCurrentWidget(self.category_setting_page)
