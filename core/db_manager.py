@@ -4,8 +4,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 class DBManager:
-    """SQLite 데이터베이스 연결 및 ER 다이어그램 스키마 관리를 전담하는 모듈"""
+    """SQLite 데이터베이스 연결, 최신 ERD 스키마 관리 및 CRUD 전담 모듈"""
+
     def __init__(self):
         self.db_path = os.getenv("DB_PATH", "hairmate.db")
         self.init_db()
@@ -17,33 +19,46 @@ class DBManager:
         return conn
 
     def init_db(self):
-        """ER 다이어그램 스펙에 맞춘 테이블 스키마 생성 및 초기화"""
+        """최신 9개 테이블 스키마 생성 및 구버전 user 테이블 감지 시 마이그레이션"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # 1. user (사용자)
+            # 구버전 user 테이블 감지 (name 컬럼이 없으면 구버전 테이블 삭제 후 재설계)
+            cursor.execute("PRAGMA table_info(user);")
+            user_cols_info = cursor.fetchall()
+            if user_cols_info:
+                col_names = [col[1] for col in user_cols_info]
+                if "name" not in col_names:
+                    cursor.execute("DROP TABLE IF EXISTS user;")
+
+            # 1. 고객 (customer)
             cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user (
+            CREATE TABLE IF NOT EXISTS customer (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
-                oauth_token TEXT NOT NULL,
-                expire_time DATETIME NOT NULL,
+                name TEXT NOT NULL,
+                phone TEXT NOT NULL UNIQUE,
+                point INTEGER NOT NULL DEFAULT 0,
+                memo TEXT DEFAULT '',
+                is_active INTEGER NOT NULL DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             """)
 
-            # 2. settings (사용자 설정)
+            # 2. 사용자/직원/디자이너 (user)
             cursor.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
+            CREATE TABLE IF NOT EXISTS user (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT UNIQUE NOT NULL,
-                value TEXT NOT NULL,
+                name TEXT NOT NULL,
+                phone TEXT,
+                position TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             """)
 
-            # 3. category (카테고리)
+            # 3. 카테고리 (category)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS category (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,13 +70,14 @@ class DBManager:
             );
             """)
 
-            # 4. service (시술)
+            # 4. 시술 (service)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS service (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 price INTEGER NOT NULL DEFAULT 0,
+                duration_minutes INTEGER DEFAULT 30,
                 display_order INTEGER NOT NULL DEFAULT 0,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -70,70 +86,88 @@ class DBManager:
             );
             """)
 
-            # 5. customer (고객)
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS customer (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                phone TEXT NOT NULL UNIQUE,
-                point INTEGER NOT NULL DEFAULT 0,
-                memo TEXT NOT NULL DEFAULT '',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                is_active INTEGER NOT NULL DEFAULT 1
-            );
-            """)
-
-            # 6. visit (방문 기록)
+            # 5. 방문 및 결제 건 (visit)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS visit (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER NOT NULL,
+                user_id INTEGER,
+                total_duration_minutes INTEGER DEFAULT 0,
+                original_amount INTEGER NOT NULL DEFAULT 0,
+                discount_amount INTEGER NOT NULL DEFAULT 0,
+                used_point INTEGER NOT NULL DEFAULT 0,
                 total_amount INTEGER NOT NULL DEFAULT 0,
                 visited_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (customer_id) REFERENCES customer(id) ON DELETE CASCADE
+                FOREIGN KEY (customer_id) REFERENCES customer(id) ON DELETE RESTRICT,
+                FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE SET NULL
             );
             """)
 
-            # 7. visit_service (상세 시술 내역)
+            # 6. 상세 시술 내역 (visit_service)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS visit_service (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                service_id INTEGER NOT NULL,
                 visit_id INTEGER NOT NULL,
+                service_id INTEGER NOT NULL,
+                user_id INTEGER,
                 price INTEGER NOT NULL DEFAULT 0,
                 quantity INTEGER NOT NULL DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (visit_id) REFERENCES visit(id) ON DELETE CASCADE,
                 FOREIGN KEY (service_id) REFERENCES service(id) ON DELETE RESTRICT,
-                FOREIGN KEY (visit_id) REFERENCES visit(id) ON DELETE CASCADE
+                FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE SET NULL
             );
             """)
 
-            # 8. payment (결제 기록)
+            # 7. 결제 수단별 기록 (payment)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS payment (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 visit_id INTEGER NOT NULL,
                 amount INTEGER NOT NULL DEFAULT 0,
-                payment_method TEXT NOT NULL, -- '카드', '현금', '포인트'
+                payment_method TEXT NOT NULL,
                 paid_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (visit_id) REFERENCES visit(id) ON DELETE CASCADE
             );
             """)
 
-            # 기본 설정값 예시 등록
+            # 8. 포인트 이력 (point_history)
             cursor.execute("""
-            INSERT OR IGNORE INTO settings (key, value) 
-            VALUES ('default_point_rate', '5');
+            CREATE TABLE IF NOT EXISTS point_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER NOT NULL,
+                visit_id INTEGER,
+                amount INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (customer_id) REFERENCES customer(id) ON DELETE RESTRICT,
+                FOREIGN KEY (visit_id) REFERENCES visit(id) ON DELETE SET NULL
+            );
             """)
+
+            # 9. 설정 (settings)
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT UNIQUE NOT NULL,
+                value TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+
+            cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('point_rate_general', '10');")
+            cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('point_rate_prepaid', '20');")
 
             conn.commit()
 
+    # -------------------------------------------------------------
+    # 카테고리 & 시술 관리 헬퍼
+    # -------------------------------------------------------------
     def fetch_active_categories_and_services(self):
-        """앱 시작 시 is_active = 1 인 카테고리 및 시술 데이터 로드"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
@@ -162,18 +196,12 @@ class DBManager:
         return categories_data, services_map
 
     def save_all_changes(self, categories_data, services_map):
-        """
-        카테고리 및 시술 변경사항을 SQLite 단일 트랜잭션으로 일괄 저장
-        """
         conn = self.get_connection()
         cursor = conn.cursor()
 
         try:
             cursor.execute("BEGIN TRANSACTION;")
 
-            # ---------------------------------------------------------
-            # [A] 카테고리 일괄 저장 및 처리 (category 테이블)
-            # ---------------------------------------------------------
             for idx, cat in enumerate(categories_data):
                 cat_id = cat.get("id")
                 name = cat["name"]
@@ -181,23 +209,18 @@ class DBManager:
                 display_order = idx
 
                 if cat_id is None:
-                    # 신규 추가 (INSERT)
                     cursor.execute("""
                         INSERT INTO category (name, display_order, is_active)
                         VALUES (?, ?, ?)
                     """, (name, display_order, is_active))
                     cat["id"] = cursor.lastrowid
                 else:
-                    # 기존 항목 수정/삭제 (UPDATE)
                     cursor.execute("""
                         UPDATE category
                         SET name = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                     """, (name, display_order, is_active, cat_id))
 
-            # ---------------------------------------------------------
-            # [B] 시술 항목 일괄 저장 및 처리 (service 테이블)
-            # ---------------------------------------------------------
             for cat in categories_data:
                 cat_id = cat.get("id")
                 cat_name = cat["name"]
@@ -213,14 +236,12 @@ class DBManager:
                     is_active = 0 if (svc.get("deleted", False) or cat_deleted) else 1
 
                     if svc_id is None:
-                        # 신규 추가 (INSERT)
                         cursor.execute("""
                             INSERT INTO service (category_id, name, price, display_order, is_active)
                             VALUES (?, ?, ?, ?, ?)
                         """, (cat_id, svc_name, price, display_order, is_active))
                         svc["id"] = cursor.lastrowid
                     else:
-                        # 기존 항목 수정/삭제 (UPDATE)
                         cursor.execute("""
                             UPDATE service
                             SET category_id = ?, name = ?, price = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
@@ -237,8 +258,10 @@ class DBManager:
         finally:
             conn.close()
 
+    # -------------------------------------------------------------
+    # Settings 헬퍼
+    # -------------------------------------------------------------
     def get_setting(self, key: str, default: str = "") -> str:
-        """settings 테이블에서 지정한 key의 설정값을 조회합니다."""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -252,7 +275,6 @@ class DBManager:
             conn.close()
 
     def set_setting(self, key: str, value: str) -> bool:
-        """settings 테이블에 key-value 설정값을 신규 등록하거나 업데이트합니다."""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -268,6 +290,84 @@ class DBManager:
         except Exception as e:
             conn.rollback()
             print(f"[DB Error] set_setting: {e}")
+            return False
+        finally:
+            conn.close()
+
+    # -------------------------------------------------------------
+    # User / Designer (디자이너/직원) CRUD 헬퍼
+    # -------------------------------------------------------------
+    def get_all_designers(self):
+        """활성화된(is_active=1) 디자이너/직원 목록 조회"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT id, name, phone, position 
+                FROM user 
+                WHERE is_active = 1 
+                ORDER BY id ASC
+            """)
+            rows = cursor.fetchall()
+            return [{"id": r[0], "name": r[1], "phone": r[2] or "", "position": r[3] or ""} for r in rows]
+        except Exception as e:
+            print(f"[DB Error] get_all_designers: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def add_designer(self, name: str, phone: str, position: str) -> tuple[bool, str]:
+        """신규 디자이너 등록 (성공 여부, 에러 메시지 반환)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO user (name, phone, position, is_active)
+                VALUES (?, ?, ?, 1)
+            """, (name, phone, position))
+            conn.commit()
+            return True, ""
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] add_designer: {e}")
+            return False, str(e)
+        finally:
+            conn.close()
+
+    def update_designer(self, user_id: int, name: str, phone: str, position: str) -> tuple[bool, str]:
+        """디자이너 정보 수정 (성공 여부, 에러 메시지 반환)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE user 
+                SET name = ?, phone = ?, position = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND is_active = 1
+            """, (name, phone, position, user_id))
+            conn.commit()
+            return True, ""
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] update_designer: {e}")
+            return False, str(e)
+        finally:
+            conn.close()
+
+    def delete_designer(self, user_id: int) -> bool:
+        """디자이너 논리적 삭제 (is_active = 0)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE user 
+                SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (user_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] delete_designer: {e}")
             return False
         finally:
             conn.close()
