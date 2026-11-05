@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont
 from ui.theme import Colors, Styles, get_icon, load_fonts
 from ui.customer_view import CustomerView
+from ui.sales_registration_view import SalesRegistrationView
 from ui.settings_google_view import SettingsGoogleView
 from ui.settings_category_view import SettingsCategoryView
 from ui.settings_point_view import SettingsPointView  
@@ -102,9 +103,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.setContentsMargins(0, 0, 0, 15)
         sidebar_layout.setSpacing(4)
 
-        # 1.1 로고 헤더
         kaushan_font_family = load_fonts()
-        
         logo_container = QFrame(sidebar)
         logo_container.setFixedHeight(50)
         logo_container.setStyleSheet(f"border-bottom: 1.5px solid {Colors.WHITE}; background-color: transparent;")
@@ -113,14 +112,12 @@ class MainWindow(QMainWindow):
         logo_layout.setContentsMargins(15, 0, 15, 0)
 
         logo_label = QLabel("HairMate", logo_container)
-        logo_font = QFont(kaushan_font_family, 24)
-        logo_label.setFont(logo_font)
+        logo_label.setFont(QFont(kaushan_font_family, 24))
         logo_label.setStyleSheet(f"color: {Colors.WHITE}; border: none;")
         logo_layout.addWidget(logo_label)
 
         sidebar_layout.addWidget(logo_container)
 
-        # 1.2 메인 사이드바 버튼 목록
         self.btn_customer = SidebarButton("  고객관리", "customer.svg")
         self.btn_sales_reg = SidebarButton("  매출등록", "sales_registration.svg")
         self.btn_sales_analysis = SidebarButton("  매출분석", "sales_statistics.svg")
@@ -132,10 +129,9 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.btn_sales_reg)
         sidebar_layout.addWidget(self.btn_sales_analysis)
 
-        # 메인 메뉴 클릭 이벤트 연결
         self.btn_customer.clicked.connect(self.show_customer_page)
+        self.btn_sales_reg.clicked.connect(self.show_sales_reg_page)
 
-        # 1.3 설정 하위 서브메뉴 Container
         self.sub_menu_container = QWidget(sidebar)
         sub_layout = QVBoxLayout(self.sub_menu_container)
         sub_layout.setContentsMargins(0, 0, 0, 0)
@@ -162,10 +158,8 @@ class MainWindow(QMainWindow):
 
         setting_hover_group = HoverMenuContainer(self.btn_setting, self.sub_menu_container, sidebar)
         sidebar_layout.addWidget(setting_hover_group)
-
         sidebar_layout.addStretch(1)
 
-        # 1.4 종료 버튼
         self.btn_exit = SidebarButton("  종료", "exit.svg")
         self.btn_exit.clicked.connect(self.close)
         sidebar_layout.addWidget(self.btn_exit)
@@ -188,7 +182,7 @@ class MainWindow(QMainWindow):
         header.setStyleSheet(f"background-color: {Colors.BACKGROUND}; border-bottom: 1.5px solid {Colors.PRIMARY};")
         
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(20, 6, 20, 10)
+        header_layout.setContentsMargins(20, 6, 20, 6)
 
         today_str = datetime.now().strftime("%Y년 %m월 %d일")
         lbl_date = QLabel(today_str, header)
@@ -197,58 +191,89 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(lbl_date)
         header_layout.addStretch()
 
+        # 상단 가로선 위의 ← 뒤로가기 버튼
+        self.btn_top_back = QPushButton("← 뒤로가기", header)
+        self.btn_top_back.setFixedSize(110, 32)
+        self.btn_top_back.setCursor(Qt.PointingHandCursor)
+        self.btn_top_back.setFont(QFont("Inter", 11, QFont.Bold))
+        self.btn_top_back.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        self.btn_top_back.setVisible(False)
+        header_layout.addWidget(self.btn_top_back)
+
         right_layout.addWidget(header)
 
-        # 2.2 중앙 Stacked Widget 영역 및 페이지 등록
+        # 2.2 중앙 Stacked Widget 영역
         self.stack = QStackedWidget(right_panel)
         self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.stack.setStyleSheet(f"background-color: {Colors.BACKGROUND};")
 
-        # 0: 고객 관리 화면
         self.customer_page = CustomerView()
         self.stack.addWidget(self.customer_page)
 
-        # 1: 구글 계정 인증 화면
+        self.sales_reg_page = SalesRegistrationView()
+        self.stack.addWidget(self.sales_reg_page)
+
         self.google_setting_page = SettingsGoogleView()
         self.stack.addWidget(self.google_setting_page)
 
-        # 2: 포인트 관리 화면
         self.point_setting_page = SettingsPointView()
         self.stack.addWidget(self.point_setting_page)
 
-        # 3: 디자이너 관리 화면
         self.designer_setting_page = SettingsDesignerView()
         self.stack.addWidget(self.designer_setting_page)
 
-        # 4: 시술 카테고리 관리 화면
         self.category_setting_page = SettingsCategoryView()
         self.stack.addWidget(self.category_setting_page)
 
-        # 초기 시작 화면을 고객 관리 화면으로 설정
+        # 뒤로가기 버튼 클릭 시 결제 취소 확인 팝업 호출 함수 연결
+        self.btn_top_back.clicked.connect(self.sales_reg_page.confirm_and_clear_selection)
+        self.sales_reg_page.page_changed.connect(self.btn_top_back.setVisible)
+
         self.show_customer_page()
 
         right_layout.addWidget(self.stack)
         main_layout.addWidget(right_panel, 1)
 
-        # 서브메뉴 버튼 이벤트 연동
         for btn in self.sub_buttons:
             btn.clicked.connect(lambda checked=False, target=btn: self.select_sub_button(target))
 
     def select_main_button(self, target_btn):
-        """메인 메뉴 선택 상태 갱신"""
         for btn in self.menu_buttons:
             btn.setChecked(btn == target_btn)
 
     def show_customer_page(self):
-        """고객관리 화면 전환 및 데이터 최신화"""
+        self.btn_top_back.setVisible(False)
         self.select_main_button(self.btn_customer)
         for btn in self.sub_buttons:
             btn.setChecked(False)
         self.customer_page.load_customer_list()
         self.stack.setCurrentWidget(self.customer_page)
 
+    def show_sales_reg_page(self):
+        self.select_main_button(self.btn_sales_reg)
+        for btn in self.sub_buttons:
+            btn.setChecked(False)
+        self.sales_reg_page.load_customer_list()
+        self.sales_reg_page.load_menu_data()
+        self.sales_reg_page.load_designers()
+        
+        is_in_dashboard = (self.sales_reg_page.main_stack.currentIndex() == 1)
+        self.btn_top_back.setVisible(is_in_dashboard)
+
+        self.stack.setCurrentWidget(self.sales_reg_page)
+
     def select_sub_button(self, target_btn):
-        """서브 메뉴 선택 상태 갱신 및 대응되는 설정 화면 전환"""
+        self.btn_top_back.setVisible(False)
         for btn in self.sub_buttons:
             btn.setChecked(btn == target_btn)
         self.select_main_button(self.btn_setting)
