@@ -9,6 +9,7 @@ from PySide6.QtGui import QFont, QWheelEvent, QDrag, QPixmap, QPainter, QPainter
 from ui.theme import Colors, Styles
 from core.db_manager import DBManager
 
+
 # -------------------------------------------------------------
 # 1. 마우스 스크롤 헬퍼 클래스
 # -------------------------------------------------------------
@@ -427,14 +428,15 @@ class BaseCard(QFrame):
 
 
 class CategoryCard(BaseCard):
-    """상단 카테고리 카드"""
+    """상단 카테고리 카드 ('선결제' 수정/삭제 보호 적용)"""
     selected = Signal(object)
 
-    def __init__(self, category_name: str, index: int, is_edited: bool = False, is_deleted: bool = False, parent=None):
+    def __init__(self, category_name: str, index: int, is_edited: bool = False, is_deleted: bool = False, is_system: bool = False, parent=None):
         super().__init__("category", index, parent)
         self.name = category_name
         self.is_edited = is_edited
         self.is_deleted = is_deleted
+        self.is_system = is_system or (category_name == "선결제")
         self.setFixedSize(100, 70)
         self.setup_ui()
         self.update_style()
@@ -456,15 +458,28 @@ class CategoryCard(BaseCard):
         super().mousePressEvent(event)
 
     def on_edit(self):
+        if self.is_system or self.name == "선결제":
+            QMessageBox.warning(self, "수정 불가", "<b>'선결제'</b> 카테고리 명칭은 수정할 수 없습니다.")
+            return
+
         dlg = CustomInputDialog("카테고리 수정", "카테고리 명칭을 수정하세요", default_text=self.name, parent=self)
         if dlg.exec_() == QDialog.Accepted:
             new_name = dlg.get_value()
+            if new_name == "선결제":
+                QMessageBox.warning(self, "중복 금지", "'선결제' 이름으로는 변경할 수 없습니다.")
+                return
             if new_name and new_name != self.name:
                 self.name = new_name
                 self.lbl_name.setText(self.name)
                 self.is_edited = True
                 self.update_style()
                 self.updated.emit()
+
+    def on_toggle_delete(self):
+        if self.is_system or self.name == "선결제":
+            QMessageBox.warning(self, "삭제 불가", "<b>'선결제'</b> 카테고리는 시스템 기본 항목이므로 삭제할 수 없습니다.")
+            return
+        super().on_toggle_delete()
 
     def update_style(self):
         self.lbl_asterisk.setVisible(self.is_edited or self.is_deleted)
@@ -494,14 +509,15 @@ class CategoryCard(BaseCard):
 
 
 class CategoryBadgeTab(BaseCard):
-    """하단 카테고리 탭 뱃지"""
+    """하단 카테고리 탭 뱃지 ('선결제' 수정/삭제 보호 적용)"""
     selected = Signal(object)
 
-    def __init__(self, category_name: str, index: int, is_edited: bool = False, is_deleted: bool = False, parent=None):
+    def __init__(self, category_name: str, index: int, is_edited: bool = False, is_deleted: bool = False, is_system: bool = False, parent=None):
         super().__init__("category", index, parent)
         self.name = category_name
         self.is_edited = is_edited
         self.is_deleted = is_deleted
+        self.is_system = is_system or (category_name == "선결제")
         self.setFixedSize(80, 48)
         self.setup_ui()
         self.update_style()
@@ -523,15 +539,28 @@ class CategoryBadgeTab(BaseCard):
         super().mousePressEvent(event)
 
     def on_edit(self):
+        if self.is_system or self.name == "선결제":
+            QMessageBox.warning(self, "수정 불가", "<b>'선결제'</b> 카테고리 명칭은 수정할 수 없습니다.")
+            return
+
         dlg = CustomInputDialog("카테고리 수정", "카테고리 명칭을 수정하세요", default_text=self.name, parent=self)
         if dlg.exec_() == QDialog.Accepted:
             new_name = dlg.get_value()
+            if new_name == "선결제":
+                QMessageBox.warning(self, "중복 금지", "'선결제' 이름으로는 변경할 수 없습니다.")
+                return
             if new_name and new_name != self.name:
                 self.name = new_name
                 self.lbl_name.setText(self.name)
                 self.is_edited = True
                 self.update_style()
                 self.updated.emit()
+
+    def on_toggle_delete(self):
+        if self.is_system or self.name == "선결제":
+            QMessageBox.warning(self, "삭제 불가", "<b>'선결제'</b> 카테고리는 시스템 기본 항목이므로 삭제할 수 없습니다.")
+            return
+        super().on_toggle_delete()
 
     def update_style(self):
         self.lbl_asterisk.setVisible(self.is_edited or self.is_deleted)
@@ -673,7 +702,7 @@ class AddCardButton(QFrame):
 
 
 # -------------------------------------------------------------
-# 4. 드롭 수신 컨테이너 위젯 (QFrame 상속 및 QSS 배경속성 활성화)
+# 4. 드롭 수신 컨테이너 위젯
 # -------------------------------------------------------------
 class DropAreaWidget(QFrame):
     """드롭 이벤트를 처리하는 커스텀 패널 (QFrame 상속으로 QSS background-color 정상 렌더링)"""
@@ -683,7 +712,6 @@ class DropAreaWidget(QFrame):
         super().__init__(parent)
         self.target_type = target_type
         self.setAcceptDrops(True)
-        # QSS 배경 스타일시트 강제 렌더링 속성 활성화
         self.setAttribute(Qt.WA_StyledBackground, True)
 
     def dragEnterEvent(self, event):
@@ -742,7 +770,7 @@ class SettingsCategoryView(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.db_manager = DBManager()  # DBManager 객체 연결
+        self.db_manager = DBManager()
         
         # DB에서 기존 저장 데이터 로드
         self.categories_data, self.services_map = self.db_manager.fetch_active_categories_and_services()
@@ -759,9 +787,7 @@ class SettingsCategoryView(QWidget):
         main_layout.setContentsMargins(30, 20, 30, 20)
         main_layout.setSpacing(15)
 
-        # -------------------------------------------------------------
-        # 1. 상단 가이드 영역 ("설명")
-        # -------------------------------------------------------------
+        # 1. 상단 가이드 영역
         top_section = QWidget(self)
         top_layout = QHBoxLayout(top_section)
         top_layout.setContentsMargins(0, 5, 0, 5)
@@ -827,9 +853,7 @@ class SettingsCategoryView(QWidget):
         line1.setStyleSheet(f"color: {Colors.PRIMARY}; background-color: {Colors.PRIMARY};")
         main_layout.addWidget(line1)
 
-        # -------------------------------------------------------------
-        # 2. 카테고리 영역 (회색 배경 적용)
-        # -------------------------------------------------------------
+        # 2. 카테고리 영역
         cat_section = QWidget(self)
         cat_layout = QHBoxLayout(cat_section)
         cat_layout.setContentsMargins(0, 5, 0, 5)
@@ -861,9 +885,7 @@ class SettingsCategoryView(QWidget):
         line2.setStyleSheet(f"color: {Colors.PRIMARY}; background-color: {Colors.PRIMARY};")
         main_layout.addWidget(line2)
 
-        # -------------------------------------------------------------
         # 3. 시술 영역
-        # -------------------------------------------------------------
         svc_section = QWidget(self)
         svc_layout = QHBoxLayout(svc_section)
         svc_layout.setContentsMargins(0, 5, 0, 5)
@@ -880,7 +902,7 @@ class SettingsCategoryView(QWidget):
         svc_outer_layout.setContentsMargins(15, 15, 15, 15)
         svc_outer_layout.setSpacing(10)
 
-        # 3.1 카테고리 탭 뱃지 가로 스크롤 영역
+        # 3.1 카테고리 탭 뱃지 영역
         self.badge_scroll_area = HorizontalScrollArea(svc_outer_container)
         self.badge_scroll_area.setFixedHeight(58)
 
@@ -896,7 +918,7 @@ class SettingsCategoryView(QWidget):
         self.badge_scroll_area.setWidget(badge_container)
         svc_outer_layout.addWidget(self.badge_scroll_area)
 
-        # 3.2 흰색 시술 카드 세로 스크롤 영역
+        # 3.2 흰색 시술 카드 영역
         self.svc_scroll_area = VerticalScrollArea(svc_outer_container)
         
         self.svc_inner_panel = DropAreaWidget("service")
@@ -920,9 +942,7 @@ class SettingsCategoryView(QWidget):
         line3.setStyleSheet(f"color: {Colors.PRIMARY}; background-color: {Colors.PRIMARY};")
         main_layout.addWidget(line3)
 
-        # -------------------------------------------------------------
-        # 4. 하단 최종 저장 버튼
-        # -------------------------------------------------------------
+        # 4. 하단 저장 버튼
         btn_layout = QHBoxLayout()
         btn_layout.setAlignment(Qt.AlignCenter)
 
@@ -992,8 +1012,9 @@ class SettingsCategoryView(QWidget):
             cat_name = cat_info["name"]
             is_ed = cat_info.get("edited", False)
             is_del = cat_info.get("deleted", False)
+            is_sys = cat_info.get("is_system", False) or (cat_name == "선결제")
 
-            card = CategoryCard(cat_name, index=idx, is_edited=is_ed, is_deleted=is_del, parent=self)
+            card = CategoryCard(cat_name, index=idx, is_edited=is_ed, is_deleted=is_del, is_system=is_sys, parent=self)
             card.is_selected = (cat_name == self.current_category)
             card.update_style()
 
@@ -1004,7 +1025,7 @@ class SettingsCategoryView(QWidget):
             self.cat_cards_layout.addWidget(card)
             self.category_widgets.append(card)
 
-            badge = CategoryBadgeTab(cat_name, index=idx, is_edited=is_ed, is_deleted=is_del, parent=self)
+            badge = CategoryBadgeTab(cat_name, index=idx, is_edited=is_ed, is_deleted=is_del, is_system=is_sys, parent=self)
             badge.is_selected = (cat_name == self.current_category)
             badge.update_style()
 
@@ -1092,6 +1113,9 @@ class SettingsCategoryView(QWidget):
         dlg = CustomInputDialog("카테고리 추가", "새 카테고리 명칭을 입력하세요", parent=self)
         if dlg.exec_() == QDialog.Accepted:
             cat_name = dlg.get_value()
+            if cat_name == "선결제":
+                QMessageBox.warning(self, "중복 오류", "'선결제' 카테고리는 시스템 기본 항목으로 이미 존재합니다.")
+                return
             if cat_name:
                 existing_names = [c["name"] for c in self.categories_data]
                 if cat_name not in existing_names:
@@ -1123,12 +1147,10 @@ class SettingsCategoryView(QWidget):
 
     def on_save_all(self):
         """'변경 사항 모두 저장' 버튼 클릭 시 SQLite 트랜잭션 일괄 저장 실행"""
-        # 1. DB 매니저 트랜잭션 일괄 저장 호출
         success, message = self.db_manager.save_all_changes(self.categories_data, self.services_map)
 
         if success:
             QMessageBox.information(self, "저장 완료", message)
-            # 2. 저장 후 상태 초기화 (삭제 목록 제거 및 수정 플래그 해제)
             self.categories_data, self.services_map = self.db_manager.fetch_active_categories_and_services()
             if self.categories_data:
                 valid_names = [c["name"] for c in self.categories_data]

@@ -5,9 +5,90 @@ from PySide6.QtWidgets import (
     QTextEdit, QProgressBar
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QTextDocument
 from ui.theme import Colors, Styles, get_icon
 from core.db_manager import DBManager
+
+
+SCROLLBAR_STYLE = """
+    QScrollBar:vertical {
+        border: none;
+        background: #EAEAEA;
+        width: 10px;
+        margin: 0px;
+        border-radius: 5px;
+    }
+    QScrollBar::handle:vertical {
+        background: #B0B0B0;
+        min-height: 25px;
+        border-radius: 5px;
+    }
+    QScrollBar::handle:vertical:hover {
+        background: #888888;
+    }
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+        background: none;
+        height: 0px;
+    }
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+        background: none;
+    }
+"""
+
+
+class RoundedHeader(QHeaderView):
+    """상단 양쪽 모서리만 라운드 적용 커스텀 헤더 뷰 (세로 경계선 제거 및 통일 UI)"""
+
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self.setDefaultAlignment(Qt.AlignCenter)
+
+    def paintSection(self, painter, rect, logicalIndex):
+        painter.save()
+
+        r = 8.0
+        x, y, w, h = float(rect.x()), float(rect.y()), float(rect.width()), float(rect.height())
+        count = self.count()
+
+        path = QPainterPath()
+        if count == 1:
+            path.moveTo(x + r, y)
+            path.lineTo(x + w - r, y)
+            path.quadTo(x + w, y, x + w, y + r)
+            path.lineTo(x + w, y + h)
+            path.lineTo(x, y + h)
+            path.lineTo(x, y + r)
+            path.quadTo(x, y, x + r, y)
+        elif logicalIndex == 0:
+            path.moveTo(x + r, y)
+            path.lineTo(x + w, y)
+            path.lineTo(x + w, y + h)
+            path.lineTo(x, y + h)
+            path.lineTo(x, y + r)
+            path.quadTo(x, y, x + r, y)
+        elif logicalIndex == count - 1:
+            path.moveTo(x, y)
+            path.lineTo(x + w - r, y)
+            path.quadTo(x + w, y, x + w, y + r)
+            path.lineTo(x + w, y + h)
+            path.lineTo(x, y + h)
+            path.closeSubpath()
+        else:
+            path.addRect(rect)
+
+        painter.fillPath(path, QColor(Colors.PRIMARY))
+
+        text = self.model().headerData(logicalIndex, self.orientation(), Qt.DisplayRole)
+        if text:
+            doc = QTextDocument()
+            doc.setHtml(f"<div style='color: #FFFFFF; font-weight: bold; font-size: 13px; text-align: center;'>{text}</div>")
+            doc.setTextWidth(rect.width())
+
+            y_offset = (rect.height() - doc.size().height()) / 2
+            painter.translate(rect.x(), rect.y() + y_offset)
+            doc.drawContents(painter)
+
+        painter.restore()
 
 
 class ConfirmCustomerDeleteDialog(QDialog):
@@ -142,7 +223,7 @@ class CustomerView(QWidget):
 
         left_layout.addWidget(search_box)
 
-        # 1.2 테이블 위젯
+        # 1.2 테이블 위젯 (매출 등록 화면과 동일한 RoundedHeader 및 스타일 구성)
         table_container = QFrame(left_outer)
         table_container.setStyleSheet("""
             QFrame {
@@ -156,6 +237,11 @@ class CustomerView(QWidget):
         table_layout.setContentsMargins(0, 0, 0, 0)
 
         self.table = QTableWidget(table_container)
+        
+        custom_header = RoundedHeader(Qt.Horizontal, self.table)
+        custom_header.setFixedHeight(40)
+        self.table.setHorizontalHeader(custom_header)
+
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["번호", "이름", "전화번호", "최근 방문일자"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -167,74 +253,32 @@ class CustomerView(QWidget):
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
-        self.table.setStyleSheet(f"""
-            QTableWidget {{
+        self.table.setStyleSheet("""
+            QTableWidget {
                 border: none;
                 background-color: #FFFFFF;
                 border-radius: 6px;
                 font-size: 13px;
                 color: #000000;
                 outline: none;
-            }}
-            QHeaderView {{
-                background-color: transparent;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-            }}
-            QHeaderView::section {{
-                background-color: {Colors.PRIMARY};
-                color: #FFFFFF;
-                font-weight: bold;
-                font-size: 13px;
-                border: none;
-                height: 40px;
-                text-align: center;
-            }}
-            QHeaderView::section:first {{
-                border-top-left-radius: 6px;
-            }}
-            QHeaderView::section:last {{
-                border-top-right-radius: 6px;
-            }}
-            QTableWidget::item {{
+            }
+            QTableWidget::item {
                 border-bottom: 1px solid #E0E0E0;
                 padding: 8px;
                 outline: none;
-            }}
-            QTableWidget::item:focus {{
+            }
+            QTableWidget::item:focus {
                 border-bottom: 1px solid #E0E0E0;
                 outline: none;
-            }}
-            QTableWidget::item:selected {{
+            }
+            QTableWidget::item:selected {
                 background-color: #E8F5E9;
                 color: #000000;
                 font-weight: bold;
                 outline: none;
-            }}
-            QScrollBar:vertical {{
-                border: none;
-                background: #F2F2F2;
-                width: 8px;
-                margin: 0px;
-                border-radius: 4px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: #C0C0C0;
-                min-height: 25px;
-                border-radius: 4px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background: {Colors.PRIMARY};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                border: none;
-                background: none;
-                height: 0px;
-            }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-                background: none;
-            }}
+            }
         """)
+        self.table.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
 
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Fixed)
@@ -257,7 +301,7 @@ class CustomerView(QWidget):
         self.right_stack = QStackedWidget(self.right_container)
         
         # -------------------------------------------------------------
-        # Page 0: 신규 고객 등록 화면 (폭 400px 고정 & 타이틀 상단 밀착)
+        # Page 0: 신규 고객 등록 화면
         # -------------------------------------------------------------
         page_reg = QWidget()
         page_reg_layout = QVBoxLayout(page_reg)
@@ -265,14 +309,12 @@ class CustomerView(QWidget):
 
         page_reg_layout.addStretch(1)
 
-        # 폭 400px 고정 컨테이너 (과도한 좌우 확장 방지)
         reg_container = QWidget(page_reg)
         reg_container.setFixedWidth(400)
         reg_layout = QVBoxLayout(reg_container)
         reg_layout.setContentsMargins(0, 0, 0, 0)
         reg_layout.setSpacing(16)
 
-        # 신규 고객 등록 타이틀 (입력란 바로 위 배치)
         lbl_reg_title = QLabel("신규 고객 등록", reg_container)
         lbl_reg_title.setFont(QFont("Inter", 20, QFont.Bold))
         lbl_reg_title.setStyleSheet("color: #000000; background: transparent;")
@@ -304,7 +346,6 @@ class CustomerView(QWidget):
         inner_layout.setContentsMargins(25, 30, 25, 30)
         inner_layout.setSpacing(22)
 
-        # 공통 언더라인 행 스타일
         row_qss = """
             QFrame {
                 border: none;
@@ -558,12 +599,13 @@ class CustomerView(QWidget):
         self.txt_info_memo.setPlaceholderText("고객 관련 특이사항 및 메모 입력")
         self.txt_info_memo.setFont(QFont("Inter", 11))
         self.txt_info_memo.setStyleSheet("border: none; background: transparent;")
+        self.txt_info_memo.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
         right_memo_layout.addWidget(self.txt_info_memo, 1)
 
         tab0_outer_layout.addWidget(tab0_right_inner, 1)
         tab0_layout.addWidget(tab0_outer, 1)
 
-        # 하단 수정 / 삭제 버튼 그룹 (삭제 버튼 빨간색 반영)
+        # 하단 수정 / 삭제 버튼 그룹
         btn_action_layout = QHBoxLayout()
         btn_action_layout.setSpacing(10)
 
