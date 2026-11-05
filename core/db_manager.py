@@ -19,7 +19,7 @@ class DBManager:
         return conn
 
     def init_db(self):
-        """최신 9개 테이블 스키마 생성 및 구버전 테이블 자동 마이그레이션"""
+        """최신 9개 테이블 스키마 생성 및 필수 기본 데이터(선결제 카테고리/적립률) 자동 보장"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
@@ -65,10 +65,22 @@ class DBManager:
                 name TEXT NOT NULL,
                 display_order INTEGER NOT NULL DEFAULT 0,
                 is_active INTEGER NOT NULL DEFAULT 1,
+                is_system INTEGER NOT NULL DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             """)
+
+            cursor.execute("PRAGMA table_info(category);")
+            cat_cols = [col[1] for col in cursor.fetchall()]
+            if "is_system" not in cat_cols:
+                cursor.execute("ALTER TABLE category ADD COLUMN is_system INTEGER NOT NULL DEFAULT 0;")
+
+            cursor.execute("SELECT COUNT(*) FROM category WHERE name = '선결제';")
+            if cursor.fetchone()[0] == 0:
+                cursor.execute("INSERT INTO category (name, display_order, is_active, is_system) VALUES ('선결제', 0, 1, 1);")
+            else:
+                cursor.execute("UPDATE category SET is_system = 1 WHERE name = '선결제';")
 
             # 4. 시술 (service)
             cursor.execute("""
@@ -105,6 +117,12 @@ class DBManager:
             );
             """)
 
+            # visit 테이블 user_id 컬럼 자동 마이그레이션 보장
+            cursor.execute("PRAGMA table_info(visit);")
+            visit_cols = [col[1] for col in cursor.fetchall()]
+            if "user_id" not in visit_cols:
+                cursor.execute("ALTER TABLE visit ADD COLUMN user_id INTEGER;")
+
             # 6. 상세 시술 내역 (visit_service)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS visit_service (
@@ -121,6 +139,12 @@ class DBManager:
                 FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE SET NULL
             );
             """)
+
+            # visit_service 테이블 user_id 컬럼 자동 마이그레이션 보장
+            cursor.execute("PRAGMA table_info(visit_service);")
+            vs_cols = [col[1] for col in cursor.fetchall()]
+            if "user_id" not in vs_cols:
+                cursor.execute("ALTER TABLE visit_service ADD COLUMN user_id INTEGER;")
 
             # 7. 결제 수단별 기록 (payment)
             cursor.execute("""
@@ -300,6 +324,44 @@ class DBManager:
         finally:
             conn.close()
 
+    def update_customer_point(self, customer_id: int, new_point: int) -> bool:
+        """고객 포인트 업데이트"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE customer
+                SET point = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND is_active = 1
+            """, (int(new_point), int(customer_id)))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] update_customer_point: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def update_customer_memo(self, customer_id: int, memo: str) -> bool:
+        """고객 메모 단독 업데이트"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE customer
+                SET memo = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND is_active = 1
+            """, (str(memo), int(customer_id)))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] update_customer_memo: {e}")
+            return False
+        finally:
+            conn.close()
+
     def delete_customer(self, customer_id: int) -> bool:
         """고객 논리적 삭제 (is_active = 0)"""
         try:
@@ -320,6 +382,69 @@ class DBManager:
         except Exception as e:
             conn.rollback()
             print(f"[DB Error] delete_customer: {e}")
+            return False
+        finally:
+            conn.close()
+
+    # -------------------------------------------------------------
+    # 매출 데이터 저장 통합 메서드 (visit, visit_service, payment, point_history)
+    # -------------------------------------------------------------
+    def record_sale(self, customer_id: int, user_id: int, duration_minutes: int,
+                    total_amount: int, used_point: int, earned_point: int,
+                    visited_at_str: str, memo: str, cart_items: list, payments_history: list) -> bool:
+        """매출 결제 완료 시 visit, visit_service, payment, point_history 등록 및 고객 정보(포인트, 메모) 업데이트"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("BEGIN TRANSACTION;")
+
+            # 1. visit 테이블 저장
+            cursor.execute("""
+                INSERT INTO visit (customer_id, user_id, total_duration_minutes, original_amount, discount_amount, used_point, total_amount, visited_at)
+                VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+            """, (customer_id, user_id, duration_minutes, total_amount, used_point, total_amount, visited_at_str))
+            
+            visit_id = cursor.lastrowid
+
+            # 2. visit_service 상세 저장
+            for item in cart_items:
+                cursor.execute("""
+                    INSERT INTO visit_service (visit_id, service_id, user_id, price, quantity)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (visit_id, item["id"], user_id, item["price"], item["qty"]))
+
+            # 3. payment 수단별 저장
+            for p in payments_history:
+                cursor.execute("""
+                    INSERT INTO payment (visit_id, amount, payment_method, paid_at)
+                    VALUES (?, ?, ?, ?)
+                """, (visit_id, p["amount"], p["method"], visited_at_str))
+
+            # 4. 포인트 사용/적립 내역 (point_history)
+            if used_point > 0:
+                cursor.execute("""
+                    INSERT INTO point_history (customer_id, visit_id, amount, type, description)
+                    VALUES (?, ?, ?, 'USE', '시술 결제 포인트 사용')
+                """, (customer_id, visit_id, -used_point))
+
+            if earned_point > 0:
+                cursor.execute("""
+                    INSERT INTO point_history (customer_id, visit_id, amount, type, description)
+                    VALUES (?, ?, ?, 'EARN', '시술 결제 포인트 적립/충전')
+                """, (customer_id, visit_id, earned_point))
+
+            # 5. customer 포인트 및 메모 최종 업데이트
+            cursor.execute("""
+                UPDATE customer
+                SET point = point - ? + ?, memo = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND is_active = 1
+            """, (used_point, earned_point, memo, customer_id))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] record_sale: {e}")
             return False
         finally:
             conn.close()
@@ -411,19 +536,19 @@ class DBManager:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT id, name FROM category WHERE is_active = 1 ORDER BY display_order ASC")
+        cursor.execute("SELECT id, name, is_system FROM category WHERE is_active = 1 ORDER BY display_order ASC, id ASC")
         categories_rows = cursor.fetchall()
 
         categories_data = []
         services_map = {}
 
-        for cat_id, cat_name in categories_rows:
-            categories_data.append({"id": cat_id, "name": cat_name, "edited": False, "deleted": False})
+        for cat_id, cat_name, is_sys in categories_rows:
+            categories_data.append({"id": cat_id, "name": cat_name, "is_system": is_sys, "edited": False, "deleted": False})
             
             cursor.execute("""
                 SELECT id, name, price FROM service 
                 WHERE category_id = ? AND is_active = 1 
-                ORDER BY display_order ASC
+                ORDER BY display_order ASC, id ASC
             """, (cat_id,))
             services_rows = cursor.fetchall()
             
@@ -445,14 +570,19 @@ class DBManager:
             for idx, cat in enumerate(categories_data):
                 cat_id = cat.get("id")
                 name = cat["name"]
-                is_active = 0 if cat.get("deleted", False) else 1
+                
+                if name == "선결제" or cat.get("is_system") == 1:
+                    is_active = 1
+                else:
+                    is_active = 0 if cat.get("deleted", False) else 1
+
                 display_order = idx
 
                 if cat_id is None:
                     cursor.execute("""
-                        INSERT INTO category (name, display_order, is_active)
-                        VALUES (?, ?, ?)
-                    """, (name, display_order, is_active))
+                        INSERT INTO category (name, display_order, is_active, is_system)
+                        VALUES (?, ?, ?, ?)
+                    """, (name, display_order, is_active, 1 if name == "선결제" else 0))
                     cat["id"] = cursor.lastrowid
                 else:
                     cursor.execute("""
@@ -465,7 +595,7 @@ class DBManager:
                 cat_id = cat.get("id")
                 cat_name = cat["name"]
                 services = services_map.get(cat_name, [])
-                cat_deleted = cat.get("deleted", False)
+                cat_deleted = cat.get("deleted", False) and cat_name != "선결제"
 
                 for s_idx, svc in enumerate(services):
                     svc_id = svc.get("id")

@@ -3,7 +3,8 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QTextEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
     QFrame, QMessageBox, QAbstractItemView, QStackedWidget,
-    QComboBox, QDateEdit, QGridLayout, QScrollArea, QDialog, QSizePolicy
+    QComboBox, QDateEdit, QGridLayout, QScrollArea, QDialog, QSizePolicy,
+    QSpinBox
 )
 from PySide6.QtCore import Qt, QDate, Signal
 from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QTextDocument
@@ -11,7 +12,6 @@ from ui.theme import Colors, get_icon
 from core.db_manager import DBManager
 
 
-# 통일된 둥근 모서리(Capsule/Pill 형태) 스크롤바 QSS
 SCROLLBAR_STYLE = """
     QScrollBar:vertical {
         border: none;
@@ -72,6 +72,64 @@ class HorizontalScrollArea(QScrollArea):
             event.accept()
         else:
             super().wheelEvent(event)
+
+
+class CustomAlertDialog(QDialog):
+    """커스텀 알림/안내 팝업 (단일 '확인' 버튼 적용)"""
+
+    def __init__(self, title: str, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setMinimumWidth(480)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(35, 30, 35, 25)
+        c_layout.setSpacing(22)
+
+        formatted_msg = message.replace("\n", "<br>")
+        lbl_msg = QLabel(f"<div style='line-height: 150%; text-align: center;'>{formatted_msg}</div>", container)
+        lbl_msg.setFont(QFont("Inter", 13, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000;")
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setAlignment(Qt.AlignCenter)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedSize(130, 42)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+
+        btn_layout.addWidget(btn_confirm)
+
+        c_layout.addWidget(lbl_msg)
+        c_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
 
 
 class ConfirmCancelDialog(QDialog):
@@ -151,7 +209,7 @@ class ConfirmCancelDialog(QDialog):
 
 
 class RoundedHeader(QHeaderView):
-    """상단 양쪽 모서리만 라운드(하단은 직각) 적용 커스텀 헤더 뷰 (고객 목록 테이블용)"""
+    """상단 양쪽 모서리만 라운드 적용 커스텀 헤더 뷰"""
 
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
@@ -206,7 +264,7 @@ class RoundedHeader(QHeaderView):
 
 
 class YellowStarHeader(QHeaderView):
-    """상단 양쪽 모서리만 라운드(하단은 직각) 적용 및 별표(*) 노란색 커스텀 헤더 뷰 (장바구니 테이블용)"""
+    """상단 양쪽 모서리만 라운드 적용 및 별표(*) 노란색 커스텀 헤더 뷰"""
 
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
@@ -316,6 +374,9 @@ class SalesRegistrationView(QWidget):
 
     page_changed = Signal(bool)
 
+    KEY_GENERAL_RATE = "point_rate_general"
+    KEY_PREPAID_RATE = "point_rate_prepaid"
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.db_manager = DBManager()
@@ -333,6 +394,23 @@ class SalesRegistrationView(QWidget):
         self.load_customer_list()
         self.load_menu_data()
         self.load_designers()
+
+    def get_point_rates(self) -> tuple[float, float]:
+        """DB 설정 테이블에서 일반 및 선결제 적립률 비율 조회 (기본값: 일반 10%, 선결제 20%)"""
+        gen_str = self.db_manager.get_setting(self.KEY_GENERAL_RATE, default="10")
+        prep_str = self.db_manager.get_setting(self.KEY_PREPAID_RATE, default="20")
+
+        try:
+            gen_rate = float(gen_str) / 100.0
+        except ValueError:
+            gen_rate = 0.10
+
+        try:
+            prep_rate = float(prep_str) / 100.0
+        except ValueError:
+            prep_rate = 0.20
+
+        return gen_rate, prep_rate
 
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
@@ -440,7 +518,7 @@ class SalesRegistrationView(QWidget):
         page_empty_layout.addWidget(lbl_empty)
 
         select_layout.addWidget(page_empty, 3)
-        self.main_stack.addWidget(page_select_cust)  # Index 0
+        self.main_stack.addWidget(page_select_cust)
 
         # =============================================================
         # Page 1: 매출 등록 대시보드
@@ -450,9 +528,7 @@ class SalesRegistrationView(QWidget):
         sales_layout.setContentsMargins(0, 0, 0, 0)
         sales_layout.setSpacing(20)
 
-        # 좌측 패널 (380px 고정)
         left_sales_panel = QWidget(page_sales)
-        left_sales_panel.setFixedWidth(380)
         left_s_layout = QVBoxLayout(left_sales_panel)
         left_s_layout.setContentsMargins(0, 0, 0, 0)
         left_s_layout.setSpacing(10)
@@ -465,6 +541,14 @@ class SalesRegistrationView(QWidget):
         ctrl_layout.setContentsMargins(10, 6, 10, 6)
         ctrl_layout.setSpacing(8)
 
+        unified_input_style = """
+            border: 1.5px solid #C0C0C0;
+            border-radius: 4px;
+            background-color: #FAFAFA;
+            color: #000000;
+            padding: 2px 4px;
+        """
+
         v_designer = QVBoxLayout()
         v_designer.setSpacing(2)
         lbl_d = QLabel("담당 디자이너", ctrl_frame)
@@ -473,6 +557,15 @@ class SalesRegistrationView(QWidget):
         self.cb_designer = QComboBox(ctrl_frame)
         self.cb_designer.setFixedHeight(26)
         self.cb_designer.setFont(QFont("Inter", 10))
+        self.cb_designer.setStyleSheet(f"""
+            QComboBox {{
+                {unified_input_style}
+            }}
+            QComboBox:focus {{
+                border: 1.5px solid #0D705C;
+                background-color: #FFFFFF;
+            }}
+        """)
         v_designer.addWidget(lbl_d)
         v_designer.addWidget(self.cb_designer)
 
@@ -485,6 +578,15 @@ class SalesRegistrationView(QWidget):
         self.date_visit.setDate(QDate.currentDate())
         self.date_visit.setFixedHeight(26)
         self.date_visit.setFont(QFont("Inter", 10))
+        self.date_visit.setStyleSheet(f"""
+            QDateEdit {{
+                {unified_input_style}
+            }}
+            QDateEdit:focus {{
+                border: 1.5px solid #0D705C;
+                background-color: #FFFFFF;
+            }}
+        """)
         v_date.addWidget(lbl_dt)
         v_date.addWidget(self.date_visit)
 
@@ -496,16 +598,29 @@ class SalesRegistrationView(QWidget):
 
         h_dur_box = QHBoxLayout()
         h_dur_box.setSpacing(4)
-        self.txt_duration = QLineEdit("30", ctrl_frame)
-        self.txt_duration.setFixedHeight(26)
-        self.txt_duration.setAlignment(Qt.AlignCenter)
-        self.txt_duration.setFont(QFont("Inter", 10))
+        
+        self.spn_duration = QSpinBox(ctrl_frame)
+        self.spn_duration.setRange(0, 1440)
+        self.spn_duration.setSingleStep(30)
+        self.spn_duration.setValue(30)
+        self.spn_duration.setFixedHeight(26)
+        self.spn_duration.setAlignment(Qt.AlignCenter)
+        self.spn_duration.setFont(QFont("Inter", 10, QFont.Bold))
+        self.spn_duration.setStyleSheet(f"""
+            QSpinBox {{
+                {unified_input_style}
+            }}
+            QSpinBox:focus {{
+                border: 1.5px solid #0D705C;
+                background-color: #FFFFFF;
+            }}
+        """)
         
         lbl_min_unit = QLabel("분", ctrl_frame)
         lbl_min_unit.setFont(QFont("Inter", 10, QFont.Bold))
         lbl_min_unit.setStyleSheet("color: #333333; border: none; background: transparent;")
 
-        h_dur_box.addWidget(self.txt_duration, 1)
+        h_dur_box.addWidget(self.spn_duration, 1)
         h_dur_box.addWidget(lbl_min_unit)
 
         v_dur.addWidget(lbl_dur)
@@ -521,7 +636,7 @@ class SalesRegistrationView(QWidget):
         pay_card.setStyleSheet(f"background-color: #FFFFFF; border: 2px solid {Colors.PRIMARY}; border-radius: 8px;")
         pay_card_layout = QVBoxLayout(pay_card)
         pay_card_layout.setContentsMargins(16, 12, 16, 12)
-        pay_card_layout.setSpacing(8)
+        pay_card_layout.setSpacing(6)
 
         r_total = QHBoxLayout()
         lbl_t_title = QLabel("총 결제 금액 :", pay_card)
@@ -576,6 +691,20 @@ class SalesRegistrationView(QWidget):
         r_status.addWidget(self.lbl_status_val, 1)
         pay_card_layout.addLayout(r_status)
 
+        r_earn_point = QHBoxLayout()
+        lbl_earn_title = QLabel("적립 예정 포인트 :", pay_card)
+        lbl_earn_title.setFont(QFont("Inter", 10, QFont.Bold))
+        lbl_earn_title.setStyleSheet("border: none; background: transparent; color: #2B6CB0;")
+
+        self.lbl_earn_point_val = QLabel("0 P", pay_card)
+        self.lbl_earn_point_val.setFont(QFont("Inter", 10, QFont.Bold))
+        self.lbl_earn_point_val.setAlignment(Qt.AlignRight)
+        self.lbl_earn_point_val.setStyleSheet("border: none; background: transparent; color: #2B6CB0;")
+
+        r_earn_point.addWidget(lbl_earn_title)
+        r_earn_point.addWidget(self.lbl_earn_point_val, 1)
+        pay_card_layout.addLayout(r_earn_point)
+
         self.lbl_history_summary = QLabel("", pay_card)
         self.lbl_history_summary.setFont(QFont("Inter", 9, QFont.Bold))
         self.lbl_history_summary.setStyleSheet("color: #0D705C; border: none; background: transparent;")
@@ -615,7 +744,7 @@ class SalesRegistrationView(QWidget):
 
         left_s_layout.addLayout(pay_btn_layout)
 
-        # 4. 고객 정보 박스
+        # 4. 고객 정보 박스 (고객번호 항목 제거)
         cust_info_outer = QFrame(left_sales_panel)
         cust_info_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         cust_info_outer.setAttribute(Qt.WA_StyledBackground, True)
@@ -647,22 +776,6 @@ class SalesRegistrationView(QWidget):
                 font-weight: bold;
             }
         """
-
-        # 고객번호
-        f_id = QFrame(upper_info_widget)
-        f_id.setFixedHeight(30)
-        f_id.setStyleSheet(row_qss)
-        r_id = QHBoxLayout(f_id)
-        r_id.setContentsMargins(0, 0, 0, 0)
-        lbl_id = QLabel("고객번호 :", f_id)
-        lbl_id.setFont(QFont("Inter", 10, QFont.Bold))
-        lbl_id.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.lbl_info_id = QLabel("-", f_id)
-        self.lbl_info_id.setFont(QFont("Inter", 10, QFont.Bold))
-        self.lbl_info_id.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        r_id.addWidget(lbl_id)
-        r_id.addWidget(self.lbl_info_id, 1)
-        upper_info_layout.addWidget(f_id)
 
         # 이름
         f_name = QFrame(upper_info_widget)
@@ -739,6 +852,7 @@ class SalesRegistrationView(QWidget):
                 background-color: #FFFFFF;
             }
         """)
+        self.txt_info_memo.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
 
         memo_layout.addWidget(lbl_m_title)
         memo_layout.addWidget(self.txt_info_memo, 1)
@@ -748,8 +862,6 @@ class SalesRegistrationView(QWidget):
 
         c_layout.addWidget(c_inner)
         left_s_layout.addWidget(cust_info_outer, 1)
-
-        sales_layout.addWidget(left_sales_panel)
 
         # 우측 패널
         right_sales_panel = QWidget(page_sales)
@@ -813,7 +925,7 @@ class SalesRegistrationView(QWidget):
         cart_o_layout.addWidget(cart_inner)
         right_s_layout.addWidget(cart_outer, 1)
 
-        # 2. 카테고리 탭 (휠 가로스크롤 & 라운드 스크롤바) 및 시술 메뉴 그리드 (100% 채움 & 라운드 스크롤바)
+        # 2. 카테고리 탭 및 시술 메뉴 그리드
         menu_outer = QFrame(right_sales_panel)
         menu_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         menu_outer.setAttribute(Qt.WA_StyledBackground, True)
@@ -821,7 +933,6 @@ class SalesRegistrationView(QWidget):
         menu_o_layout.setContentsMargins(8, 8, 8, 8)
         menu_o_layout.setSpacing(8)
 
-        # 마우스 휠 가로 스크롤 Area 생성
         category_scroll = HorizontalScrollArea(menu_outer)
         category_scroll.setFixedHeight(66)
         category_scroll.setWidgetResizable(True)
@@ -829,7 +940,6 @@ class SalesRegistrationView(QWidget):
         category_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         category_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         
-        # 가로 스크롤바 객체에 직접 라운드 QSS 적용
         category_scroll.horizontalScrollBar().setStyleSheet("""
             QScrollBar:horizontal {
                 border: none;
@@ -869,16 +979,14 @@ class SalesRegistrationView(QWidget):
         menu_inner.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
         menu_inner.setAttribute(Qt.WA_StyledBackground, True)
         menu_i_layout = QVBoxLayout(menu_inner)
-        menu_i_layout.setContentsMargins(8, 8, 8, 8)
+        menu_i_layout.setContentsMargins(6, 6, 6, 6)
 
-        # 시술 메뉴 세로 스크롤 영역
         scroll_area = QScrollArea(menu_inner)
         scroll_area.setWidgetResizable(True)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
-        # 세로 스크롤바 객체에 직접 라운드 QSS 적용
         scroll_area.verticalScrollBar().setStyleSheet("""
             QScrollBar:vertical {
                 border: none;
@@ -906,8 +1014,10 @@ class SalesRegistrationView(QWidget):
 
         self.service_grid_widget = QWidget()
         self.service_grid_widget.setStyleSheet("background: transparent;")
+        
         self.service_grid_layout = QGridLayout(self.service_grid_widget)
-        self.service_grid_layout.setSpacing(10)
+        self.service_grid_layout.setContentsMargins(2, 2, 2, 2)
+        self.service_grid_layout.setSpacing(6)
         self.service_grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
         for c in range(4):
@@ -919,8 +1029,10 @@ class SalesRegistrationView(QWidget):
         menu_o_layout.addWidget(menu_inner, 1)
         right_s_layout.addWidget(menu_outer, 1)
 
-        sales_layout.addWidget(right_sales_panel, 1)
-        self.main_stack.addWidget(page_sales)  # Index 1
+        sales_layout.addWidget(left_sales_panel, 35)
+        sales_layout.addWidget(right_sales_panel, 65)
+
+        self.main_stack.addWidget(page_sales)
 
         main_layout.addWidget(self.main_stack)
         self.main_stack.setCurrentIndex(0)
@@ -1004,7 +1116,6 @@ class SalesRegistrationView(QWidget):
         self.render_category_buttons()
 
     def render_category_buttons(self):
-        """카테고리 버튼 (95x50 규격 및 라운드 10px 적용)"""
         while self.category_bar_layout.count():
             item = self.category_bar_layout.takeAt(0)
             if item.widget():
@@ -1037,7 +1148,7 @@ class SalesRegistrationView(QWidget):
         self.render_service_grid(category_name)
 
     def render_service_grid(self, category_name: str):
-        """시술 버튼 그리드 (가로 100% 자동 채움 및 라운드 10px 적용)"""
+        """시술 메뉴 그리드 생성"""
         while self.service_grid_layout.count():
             item = self.service_grid_layout.takeAt(0)
             if item.widget():
@@ -1057,6 +1168,7 @@ class SalesRegistrationView(QWidget):
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setFont(QFont("Inter", 11, QFont.Bold))
+            
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {Colors.PRIMARY};
@@ -1064,16 +1176,17 @@ class SalesRegistrationView(QWidget):
                     border: none;
                     border-radius: 10px;
                     text-align: center;
+                    padding: 4px 4px;
                 }}
                 QPushButton:hover {{
                     background-color: {Colors.PRIMARY_HOVER};
                 }}
             """)
-            btn.clicked.connect(lambda _, item=svc: self.add_to_cart(item))
+            btn.clicked.connect(lambda _, item=svc, cat=category_name: self.add_to_cart(item, cat))
             self.service_grid_layout.addWidget(btn, row, col)
 
     # -------------------------------------------------------------
-    # 고객 선택 및 계산 로직
+    # 고객 선택 및 상태 관리
     # -------------------------------------------------------------
     def on_customer_selected(self):
         selected_items = self.cust_table.selectedItems()
@@ -1085,12 +1198,12 @@ class SalesRegistrationView(QWidget):
         target_cust = next((c for c in self.all_customers if int(c["id"]) == int(cust_id)), None)
 
         if target_cust:
-            self.selected_customer = target_cust
-            self.lbl_info_id.setText(str(target_cust["id"]))
-            self.lbl_info_name.setText(target_cust["name"])
-            self.lbl_info_phone.setText(target_cust["phone"])
-            self.lbl_info_point.setText(f"{target_cust['point']:,}P")
-            self.txt_info_memo.setPlainText(target_cust["memo"] or "")
+            self.selected_customer = dict(target_cust)
+            self.lbl_info_name.setText(self.selected_customer["name"])
+            self.lbl_info_phone.setText(self.selected_customer["phone"])
+            self.lbl_info_point.setText(f"{self.selected_customer.get('point', 0):,}P")
+            
+            self.txt_info_memo.setPlainText(self.selected_customer.get("memo", "") or "")
 
             self.payments_history.clear()
             self.lbl_history_summary.setText("")
@@ -1118,6 +1231,34 @@ class SalesRegistrationView(QWidget):
 
         self.recalculate_payment_status()
 
+    # -------------------------------------------------------------
+    # 항목별 (일반 vs 선결제) 차등 적립 포인트 연산 (원금 + 보너스)
+    # -------------------------------------------------------------
+    def calculate_expected_earned_points(self, current_cash_card_pay: int = 0) -> int:
+        gen_rate, prep_rate = self.get_point_rates()
+
+        already_cash_card = sum(p["amount"] for p in self.payments_history if p["method"] in ["현금", "카드"])
+        total_cash_card_paid = already_cash_card + current_cash_card_pay
+
+        if self.total_amount <= 0 or total_cash_card_paid <= 0:
+            return 0
+
+        cash_card_ratio = min(1.0, total_cash_card_paid / float(self.total_amount))
+
+        total_earned = 0
+        for item in self.cart_items:
+            item_total = item["price"] * item["qty"]
+            is_prepaid = (item.get("category_name") == "선결제")
+            
+            if is_prepaid:
+                earned_for_item = item_total * (1.0 + prep_rate)
+            else:
+                earned_for_item = item_total * gen_rate
+
+            total_earned += int(earned_for_item * cash_card_ratio)
+
+        return total_earned
+
     def recalculate_payment_status(self):
         digits = "".join(filter(str.isdigit, self.txt_received_amount.text()))
         received_val = int(digits) if digits else 0
@@ -1136,8 +1277,16 @@ class SalesRegistrationView(QWidget):
             self.lbl_status_val.setText(f"{rem:,} 원")
             self.lbl_status_val.setStyleSheet("border: none; background: transparent; color: #E53E3E;")
 
-    def add_to_cart(self, service: dict):
+        current_pay_val = min(received_val, self.remaining_amount)
+        expected_earn_point = self.calculate_expected_earned_points(current_pay_val)
+        
+        gen_rate, prep_rate = self.get_point_rates()
+        self.lbl_earn_point_val.setText(f"{expected_earn_point:,} P (일반 {int(gen_rate*100)}% / 선결제 {int(prep_rate*100)}%)")
+
+    def add_to_cart(self, service: dict, category_name: str = ""):
         service_id = service["id"]
+        cat_name = category_name or self.active_category_name or ""
+
         existing = next((item for item in self.cart_items if item["id"] == service_id), None)
 
         if existing:
@@ -1147,6 +1296,7 @@ class SalesRegistrationView(QWidget):
                 "id": service_id,
                 "name": service["name"],
                 "price": service["price"],
+                "category_name": cat_name,
                 "qty": 1
             })
         self.update_cart_table()
@@ -1234,17 +1384,42 @@ class SalesRegistrationView(QWidget):
 
         self.recalculate_payment_status()
 
+    # -------------------------------------------------------------
+    # 커스텀 알림 창(CustomAlertDialog) 적용 결제 처리 및 DB 매출 등록
+    # -------------------------------------------------------------
     def process_payment(self, method: str):
         if not self.cart_items:
-            QMessageBox.warning(self, "결제 오류", "장바구니에 담긴 시술이 없습니다.")
+            CustomAlertDialog("결제 오류", "장바구니에 담긴 시술이 없습니다.", self).exec()
+            return
+
+        if self.remaining_amount <= 0:
+            CustomAlertDialog("결제 완료", "이미 결제가 완료되었습니다.", self).exec()
             return
 
         digits = "".join(filter(str.isdigit, self.txt_received_amount.text()))
         input_amt = int(digits) if digits else 0
 
         if input_amt <= 0:
-            QMessageBox.warning(self, "결제 오류", "결제할 금액을 입력해 주세요.")
+            CustomAlertDialog("결제 오류", "결제할 금액을 입력해 주세요.", self).exec()
             return
+
+        total_point_used = sum(p["amount"] for p in self.payments_history if p["method"] == "포인트")
+
+        if method == "포인트":
+            available_point = self.selected_customer.get("point", 0) if self.selected_customer else 0
+            current_usable_point = available_point - total_point_used
+
+            if current_usable_point <= 0:
+                CustomAlertDialog("포인트 부족", "사용 가능한 보유 포인트가 없습니다.", self).exec()
+                return
+
+            if input_amt > current_usable_point:
+                CustomAlertDialog(
+                    "포인트 부족", 
+                    f"입력한 금액({input_amt:,}원)이 사용 가능 포인트({current_usable_point:,}P)를 초과할 수 없습니다.", 
+                    self
+                ).exec()
+                return
 
         pay_amt = min(input_amt, self.remaining_amount)
         change_amt = max(0, input_amt - self.remaining_amount)
@@ -1252,21 +1427,65 @@ class SalesRegistrationView(QWidget):
         self.payments_history.append({"method": method, "amount": pay_amt})
         self.remaining_amount -= pay_amt
 
+        total_point_used = sum(p["amount"] for p in self.payments_history if p["method"] == "포인트")
+        current_display_point = max(0, self.selected_customer.get("point", 0) - total_point_used)
+        self.lbl_info_point.setText(f"{current_display_point:,}P")
+
         history_str = " | ".join([f"{p['method']} {p['amount']:,}원" for p in self.payments_history])
         self.lbl_history_summary.setText(f"결제 내역: {history_str}")
 
         if self.remaining_amount <= 0:
-            msg = f"결제가 완료되었습니다!\n총 결제: {self.total_amount:,}원"
+            earned_point = self.calculate_expected_earned_points(0)
+            
+            cust_id = self.selected_customer["id"]
+            new_memo = self.txt_info_memo.toPlainText().strip()
+            designer_id = self.cb_designer.currentData()
+            duration_minutes = self.spn_duration.value()
+            selected_date = self.date_visit.date().toString("yyyy-MM-dd")
+            current_time_str = datetime.now().strftime("%H:%M:%S")
+            visited_at_str = f"{selected_date} {current_time_str}"
+
+            # DB에 방문, 시술내역, 결제이력, 포인트내역 통합 저장
+            save_success = self.db_manager.record_sale(
+                customer_id=cust_id,
+                user_id=designer_id,
+                duration_minutes=duration_minutes,
+                total_amount=self.total_amount,
+                used_point=total_point_used,
+                earned_point=earned_point,
+                visited_at_str=visited_at_str,
+                memo=new_memo,
+                cart_items=self.cart_items,
+                payments_history=self.payments_history
+            )
+
+            if not save_success:
+                CustomAlertDialog("저장 오류", "DB 매출 저장 중 오류가 발생했습니다.", self).exec()
+                return
+
+            msg = f"결제가 성공적으로 완료되었습니다!\n\n• 총 결제 금액: {self.total_amount:,}원"
+            if total_point_used > 0:
+                msg += f"\n• 사용 포인트: -{total_point_used:,} P"
+            if earned_point > 0:
+                msg += f"\n• 충전/적립 포인트: +{earned_point:,} P"
+
+            final_point = self.selected_customer.get("point", 0) - total_point_used + earned_point
+            msg += f"\n• 최종 보유 포인트: {final_point:,} P"
+
             if change_amt > 0:
                 msg += f"\n\n※ 거스름돈: {change_amt:,}원"
+
+            CustomAlertDialog("결제 완료", msg, self).exec()
             
-            QMessageBox.information(self, "결제 완료", msg)
+            # 결제 완료 후 목록 새로고침 (최근 방문일자 갱신 반영)
+            self.load_customer_list()
             self.clear_customer_selection()
         else:
-            QMessageBox.information(
-                self, "부분 결제 완료", 
-                f"{method} {pay_amt:,}원 결제 승인되었습니다.\n남은 결제 금액: {self.remaining_amount:,}원"
-            )
+            CustomAlertDialog(
+                "부분 결제 완료", 
+                f"[{method}] {pay_amt:,}원 결제 승인되었습니다.\n남은 결제 금액: {self.remaining_amount:,}원", 
+                self
+            ).exec()
             self.txt_received_amount.blockSignals(True)
             self.txt_received_amount.setText(f"{self.remaining_amount:,}")
             self.txt_received_amount.blockSignals(False)
