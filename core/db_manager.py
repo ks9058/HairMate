@@ -19,11 +19,11 @@ class DBManager:
         return conn
 
     def init_db(self):
-        """최신 9개 테이블 스키마 생성 및 구버전 user 테이블 감지 시 마이그레이션"""
+        """최신 9개 테이블 스키마 생성 및 구버전 테이블 자동 마이그레이션"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # 구버전 user 테이블 감지 (name 컬럼이 없으면 구버전 테이블 삭제 후 재설계)
+            # 구버전 user 테이블 감지 시 마이그레이션
             cursor.execute("PRAGMA table_info(user);")
             user_cols_info = cursor.fetchall()
             if user_cols_info:
@@ -165,7 +165,247 @@ class DBManager:
             conn.commit()
 
     # -------------------------------------------------------------
-    # 카테고리 & 시술 관리 헬퍼
+    # Settings 헬퍼
+    # -------------------------------------------------------------
+    def get_setting(self, key: str, default: str = "") -> str:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row[0] if row else default
+        except Exception as e:
+            print(f"[DB Error] get_setting: {e}")
+            return default
+        finally:
+            conn.close()
+
+    def set_setting(self, key: str, value: str) -> bool:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO settings (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (key, str(value)))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] set_setting: {e}")
+            return False
+        finally:
+            conn.close()
+
+    # -------------------------------------------------------------
+    # Customer (고객 관리) CRUD 헬퍼
+    # -------------------------------------------------------------
+    def get_all_customers(self):
+        """활성화된(is_active=1) 고객 목록과 최근 방문일자 조회"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT 
+                    c.id, c.name, c.phone, c.point, c.memo,
+                    COALESCE((
+                        SELECT strftime('%Y-%m-%d', MAX(visited_at)) 
+                        FROM visit 
+                        WHERE customer_id = c.id
+                    ), '-') AS recent_visit_date
+                FROM customer c
+                WHERE c.is_active = 1
+                ORDER BY c.id DESC
+            """)
+            rows = cursor.fetchall()
+            return [{
+                "id": r[0],
+                "name": r[1],
+                "phone": r[2],
+                "point": r[3],
+                "memo": r[4] or "",
+                "recent_visit": r[5]
+            } for r in rows]
+        except Exception as e:
+            print(f"[DB Error] get_all_customers: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def check_phone_duplicate(self, phone: str, exclude_id: int = None) -> bool:
+        """전화번호 중복 체크"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            if exclude_id is not None:
+                cursor.execute("SELECT COUNT(*) FROM customer WHERE phone = ? AND id != ? AND is_active = 1", (phone, int(exclude_id)))
+            else:
+                cursor.execute("SELECT COUNT(*) FROM customer WHERE phone = ? AND is_active = 1", (phone,))
+            count = cursor.fetchone()[0]
+            return count > 0
+        except Exception as e:
+            print(f"[DB Error] check_phone_duplicate: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def add_customer(self, name: str, phone: str, memo: str = "") -> tuple[bool, str]:
+        """신규 고객 등록 (전화번호 중복 검증)"""
+        if self.check_phone_duplicate(phone):
+            return False, "이미 등록된 전화번호입니다."
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO customer (name, phone, point, memo, is_active)
+                VALUES (?, ?, 0, ?, 1)
+            """, (name, phone, memo))
+            conn.commit()
+            return True, ""
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] add_customer: {e}")
+            return False, str(e)
+        finally:
+            conn.close()
+
+    def update_customer(self, customer_id: int, name: str, phone: str, memo: str) -> tuple[bool, str]:
+        """고객 정보 수정 (전화번호 중복 검증)"""
+        try:
+            customer_id = int(customer_id)
+        except (TypeError, ValueError):
+            return False, "유효하지 않은 고객 ID입니다."
+
+        if self.check_phone_duplicate(phone, exclude_id=customer_id):
+            return False, "이미 다른 고객이 사용 중인 전화번호입니다."
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE customer
+                SET name = ?, phone = ?, memo = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND is_active = 1
+            """, (name, phone, memo, customer_id))
+            conn.commit()
+            return True, ""
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] update_customer: {e}")
+            return False, str(e)
+        finally:
+            conn.close()
+
+    def delete_customer(self, customer_id: int) -> bool:
+        """고객 논리적 삭제 (is_active = 0)"""
+        try:
+            customer_id = int(customer_id)
+        except (TypeError, ValueError):
+            return False
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE customer
+                SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (customer_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] delete_customer: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def get_customer_visit_history(self, customer_id: int):
+        """특정 고객 방문 이력 조회"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT 
+                    c.name AS customer_name,
+                    strftime('%Y-%m-%d', v.visited_at) AS visit_date,
+                    v.total_amount,
+                    COALESCE(GROUP_CONCAT(DISTINCT s.name), '-') AS services,
+                    COALESCE(u.name, '-') AS designer_name
+                FROM visit v
+                JOIN customer c ON v.customer_id = c.id
+                LEFT JOIN visit_service vs ON v.id = vs.visit_id
+                LEFT JOIN service s ON vs.service_id = s.id
+                LEFT JOIN user u ON v.user_id = u.id
+                WHERE v.customer_id = ?
+                GROUP BY v.id
+                ORDER BY v.visited_at DESC
+            """, (int(customer_id),))
+            rows = cursor.fetchall()
+            return [{
+                "customer_name": r[0],
+                "visit_date": r[1],
+                "amount": f"{r[2]:,}원",
+                "services": r[3],
+                "designer": r[4]
+            } for r in rows]
+        except Exception as e:
+            print(f"[DB Error] get_customer_visit_history: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def get_customer_stats(self, customer_id: int):
+        """특정 고객 방문 통계 데이터 조회"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            c_id = int(customer_id)
+            cursor.execute("""
+                SELECT 
+                    COUNT(id) AS visit_count,
+                    COALESCE(SUM(total_amount), 0) AS total_amt,
+                    COALESCE(AVG(total_amount), 0) AS avg_amt
+                FROM visit
+                WHERE customer_id = ?
+            """, (c_id,))
+            stat = cursor.fetchone()
+            
+            visit_count = stat[0] if stat else 0
+            total_amt = stat[1] if stat else 0
+            avg_amt = int(stat[2]) if stat else 0
+
+            cursor.execute("""
+                SELECT cat.name, COUNT(vs.id)
+                FROM visit_service vs
+                JOIN visit v ON vs.visit_id = v.id
+                JOIN service s ON vs.service_id = s.id
+                JOIN category cat ON s.category_id = cat.id
+                WHERE v.customer_id = ?
+                GROUP BY cat.id
+                ORDER BY COUNT(vs.id) DESC
+            """, (c_id,))
+            pref_rows = cursor.fetchall()
+            preferences = [{"category": r[0], "count": r[1]} for r in pref_rows]
+
+            return {
+                "total_visits": visit_count,
+                "total_amount": total_amt,
+                "avg_amount": avg_amt,
+                "preferences": preferences
+            }
+        except Exception as e:
+            print(f"[DB Error] get_customer_stats: {e}")
+            return {"total_visits": 0, "total_amount": 0, "avg_amount": 0, "preferences": []}
+        finally:
+            conn.close()
+
+    # -------------------------------------------------------------
+    # Category & Service 헬퍼
     # -------------------------------------------------------------
     def fetch_active_categories_and_services(self):
         conn = self.get_connection()
@@ -259,46 +499,9 @@ class DBManager:
             conn.close()
 
     # -------------------------------------------------------------
-    # Settings 헬퍼
-    # -------------------------------------------------------------
-    def get_setting(self, key: str, default: str = "") -> str:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
-            row = cursor.fetchone()
-            return row[0] if row else default
-        except Exception as e:
-            print(f"[DB Error] get_setting: {e}")
-            return default
-        finally:
-            conn.close()
-
-    def set_setting(self, key: str, value: str) -> bool:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("""
-                INSERT INTO settings (key, value, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(key) DO UPDATE SET
-                    value = excluded.value,
-                    updated_at = CURRENT_TIMESTAMP
-            """, (key, str(value)))
-            conn.commit()
-            return True
-        except Exception as e:
-            conn.rollback()
-            print(f"[DB Error] set_setting: {e}")
-            return False
-        finally:
-            conn.close()
-
-    # -------------------------------------------------------------
-    # User / Designer (디자이너/직원) CRUD 헬퍼
+    # User / Designer CRUD 헬퍼
     # -------------------------------------------------------------
     def get_all_designers(self):
-        """활성화된(is_active=1) 디자이너/직원 목록 조회"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -317,7 +520,6 @@ class DBManager:
             conn.close()
 
     def add_designer(self, name: str, phone: str, position: str) -> tuple[bool, str]:
-        """신규 디자이너 등록 (성공 여부, 에러 메시지 반환)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -335,7 +537,6 @@ class DBManager:
             conn.close()
 
     def update_designer(self, user_id: int, name: str, phone: str, position: str) -> tuple[bool, str]:
-        """디자이너 정보 수정 (성공 여부, 에러 메시지 반환)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -354,7 +555,6 @@ class DBManager:
             conn.close()
 
     def delete_designer(self, user_id: int) -> bool:
-        """디자이너 논리적 삭제 (is_active = 0)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:

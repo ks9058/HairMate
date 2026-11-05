@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont
 from ui.theme import Colors, Styles, get_icon, load_fonts
+from ui.customer_view import CustomerView
 from ui.settings_google_view import SettingsGoogleView
 from ui.settings_category_view import SettingsCategoryView
 from ui.settings_point_view import SettingsPointView  
@@ -131,7 +132,10 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.btn_sales_reg)
         sidebar_layout.addWidget(self.btn_sales_analysis)
 
-        # 1.3 설정 하위 서브메뉴 Container (디자이너 관리 버튼 추가 반영)
+        # 메인 메뉴 클릭 이벤트 연결
+        self.btn_customer.clicked.connect(self.show_customer_page)
+
+        # 1.3 설정 하위 서브메뉴 Container
         self.sub_menu_container = QWidget(sidebar)
         sub_layout = QVBoxLayout(self.sub_menu_container)
         sub_layout.setContentsMargins(0, 0, 0, 0)
@@ -139,7 +143,7 @@ class MainWindow(QMainWindow):
 
         self.btn_sub_google = SidebarButton("구글 계정 인증", is_sub=True)
         self.btn_sub_point = SidebarButton("포인트 관리", is_sub=True)
-        self.btn_sub_designer = SidebarButton("디자이너 관리", is_sub=True)  # 디자이너 관리 버튼 추가
+        self.btn_sub_designer = SidebarButton("디자이너 관리", is_sub=True)
         self.btn_sub_category = SidebarButton("시술 카테고리 관리", is_sub=True)
         self.btn_sub_backup = SidebarButton("백업", is_sub=True)
         self.btn_sub_restore = SidebarButton("복원", is_sub=True)
@@ -200,33 +204,33 @@ class MainWindow(QMainWindow):
         self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.stack.setStyleSheet(f"background-color: {Colors.BACKGROUND};")
 
-        # 0 index: 초기 기본 빈 페이지
-        self.empty_page = QWidget()
-        self.stack.addWidget(self.empty_page)
+        # 0: 고객 관리 화면
+        self.customer_page = CustomerView()
+        self.stack.addWidget(self.customer_page)
 
-        # 1 index: 구글 계정 인증 화면
+        # 1: 구글 계정 인증 화면
         self.google_setting_page = SettingsGoogleView()
         self.stack.addWidget(self.google_setting_page)
 
-        # 2 index: 포인트 관리 화면
+        # 2: 포인트 관리 화면
         self.point_setting_page = SettingsPointView()
         self.stack.addWidget(self.point_setting_page)
 
-        # 3 index: 디자이너 관리 화면
+        # 3: 디자이너 관리 화면
         self.designer_setting_page = SettingsDesignerView()
         self.stack.addWidget(self.designer_setting_page)
 
-        # 4 index: 시술 카테고리 관리 화면
+        # 4: 시술 카테고리 관리 화면
         self.category_setting_page = SettingsCategoryView()
         self.stack.addWidget(self.category_setting_page)
 
-        # 초기 시작 화면 설정
-        self.stack.setCurrentWidget(self.empty_page)
+        # 초기 시작 화면을 고객 관리 화면으로 설정
+        self.show_customer_page()
 
         right_layout.addWidget(self.stack)
         main_layout.addWidget(right_panel, 1)
 
-        # 모든 서브메뉴 버튼 클릭 이벤트 일괄 바인딩 (클로저 바인딩 처리)
+        # 서브메뉴 버튼 이벤트 연동
         for btn in self.sub_buttons:
             btn.clicked.connect(lambda checked=False, target=btn: self.select_sub_button(target))
 
@@ -234,6 +238,14 @@ class MainWindow(QMainWindow):
         """메인 메뉴 선택 상태 갱신"""
         for btn in self.menu_buttons:
             btn.setChecked(btn == target_btn)
+
+    def show_customer_page(self):
+        """고객관리 화면 전환 및 데이터 최신화"""
+        self.select_main_button(self.btn_customer)
+        for btn in self.sub_buttons:
+            btn.setChecked(False)
+        self.customer_page.load_customer_list()
+        self.stack.setCurrentWidget(self.customer_page)
 
     def select_sub_button(self, target_btn):
         """서브 메뉴 선택 상태 갱신 및 대응되는 설정 화면 전환"""
@@ -244,10 +256,10 @@ class MainWindow(QMainWindow):
         if target_btn == self.btn_sub_google:
             self.stack.setCurrentWidget(self.google_setting_page)
         elif target_btn == self.btn_sub_point:
-            self.point_setting_page.load_point_rates()  # 화면 전환 시 최신 DB 설정값 재로드
+            self.point_setting_page.load_point_rates()
             self.stack.setCurrentWidget(self.point_setting_page)
         elif target_btn == self.btn_sub_designer:
-            self.designer_setting_page.load_designer_list()  # 최신 직원 목록 재로드
+            self.designer_setting_page.load_designer_list()
             self.stack.setCurrentWidget(self.designer_setting_page)
         elif target_btn == self.btn_sub_category:
             self.stack.setCurrentWidget(self.category_setting_page)
