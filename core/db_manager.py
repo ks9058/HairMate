@@ -117,7 +117,6 @@ class DBManager:
             );
             """)
 
-            # visit 테이블 user_id 컬럼 자동 마이그레이션 보장
             cursor.execute("PRAGMA table_info(visit);")
             visit_cols = [col[1] for col in cursor.fetchall()]
             if "user_id" not in visit_cols:
@@ -140,7 +139,6 @@ class DBManager:
             );
             """)
 
-            # visit_service 테이블 user_id 컬럼 자동 마이그레이션 보장
             cursor.execute("PRAGMA table_info(visit_service);")
             vs_cols = [col[1] for col in cursor.fetchall()]
             if "user_id" not in vs_cols:
@@ -387,7 +385,7 @@ class DBManager:
             conn.close()
 
     # -------------------------------------------------------------
-    # 매출 데이터 저장 통합 메서드 (visit, visit_service, payment, point_history)
+    # 매출 데이터 저장 및 방문 통계 헬퍼
     # -------------------------------------------------------------
     def record_sale(self, customer_id: int, user_id: int, duration_minutes: int,
                     total_amount: int, used_point: int, earned_point: int,
@@ -530,6 +528,164 @@ class DBManager:
             conn.close()
 
     # -------------------------------------------------------------
+    # Sales Cancel (결제 취소) 헬퍼
+    # -------------------------------------------------------------
+    def get_sales_cancel_list(self, query: str = "", date_str: str = ""):
+            """결제 취소 화면용 목록 조회 (최신순 정렬, 결제 시/분 시간 포함 조회)"""
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            try:
+                sql = """
+                    SELECT 
+                        v.id AS visit_id,
+                        c.id AS customer_id,
+                        c.name AS customer_name,
+                        c.phone AS customer_phone,
+                        COALESCE((
+                            SELECT GROUP_CONCAT(s.name, '|||') 
+                            FROM visit_service vs 
+                            JOIN service s ON vs.service_id = s.id 
+                            WHERE vs.visit_id = v.id
+                        ), '-') AS services_raw,
+                        COALESCE((
+                            SELECT GROUP_CONCAT(DISTINCT payment_method) 
+                            FROM payment 
+                            WHERE visit_id = v.id
+                        ), '-') AS payment_methods,
+                        v.total_amount,
+                        strftime('%Y-%m-%d %H:%M', v.visited_at) AS visit_date,
+                        COALESCE((
+                            SELECT SUM(amount) 
+                            FROM point_history 
+                            WHERE visit_id = v.id AND type = 'EARN'
+                        ), 0) AS earned_point,
+                        COALESCE((
+                            SELECT SUM(ABS(amount)) 
+                            FROM point_history 
+                            WHERE visit_id = v.id AND type = 'USE'
+                        ), 0) AS used_point,
+                        v.total_duration_minutes,
+                        COALESCE(u.name, '-') AS designer_name,
+                        COALESCE(u.position, '') AS designer_position
+                    FROM visit v
+                    JOIN customer c ON v.customer_id = c.id
+                    LEFT JOIN user u ON v.user_id = u.id
+                    WHERE 1=1
+                """
+                params = []
+
+                if query:
+                    sql += " AND (c.name LIKE ? OR c.phone LIKE ?)"
+                    q_param = f"%{query}%"
+                    params.extend([q_param, q_param])
+
+                if date_str:
+                    sql += " AND strftime('%Y-%m-%d', v.visited_at) = ?"
+                    params.append(date_str)
+
+                sql += " ORDER BY v.visited_at DESC, v.id DESC"
+
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+
+                result = []
+                for r in rows:
+                    raw_services = r[4]
+                    if raw_services and raw_services != '-':
+                        svc_list = list(dict.fromkeys([s.strip() for s in raw_services.split('|||') if s.strip()]))
+                        display_services = ", ".join(svc_list)
+                    else:
+                        svc_list = []
+                        display_services = "-"
+
+                    dur_min = r[10] or 0
+                    if dur_min >= 60:
+                        h = dur_min // 60
+                        m = dur_min % 60
+                        dur_str = f"{h}시간" if m == 0 else f"{h}시간 {m}분"
+                    else:
+                        dur_str = f"{dur_min}분"
+
+                    d_name = r[11]
+                    d_pos = r[12]
+                    if d_name != '-' and d_pos:
+                        designer_str = f"{d_name} ({d_pos})"
+                    else:
+                        designer_str = d_name
+
+                    result.append({
+                        "visit_id": r[0],
+                        "customer_id": r[1],
+                        "customer_name": r[2],
+                        "customer_phone": r[3],
+                        "services": display_services,
+                        "services_list": svc_list,
+                        "payment_method": r[5],
+                        "total_amount": r[6],
+                        "visit_date": r[7], # 'YYYY-MM-DD HH:MM' 형태로 전달됨
+                        "earned_point": r[8],
+                        "used_point": r[9],
+                        "duration_str": dur_str,
+                        "designer_info": designer_str
+                    })
+                return result
+            except Exception as e:
+                print(f"[DB Error] get_sales_cancel_list: {e}")
+                return []
+            finally:
+                conn.close()
+
+    def cancel_sale_transaction(self, visit_id: int) -> tuple[bool, str]:
+        """결제 취소 트랜잭션: 포인트 원상복구(적립 차감 & 사용 복원) 후 visit/payment/visit_service 삭제"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("BEGIN TRANSACTION;")
+
+            # 1. 대상 visit 조회
+            cursor.execute("SELECT customer_id FROM visit WHERE id = ?", (visit_id,))
+            row = cursor.fetchone()
+            if not row:
+                conn.rollback()
+                return False, "존재하지 않는 결제 내역입니다."
+            customer_id = row[0]
+
+            # 2. 해당 결제건으로 적립된 포인트 / 사용된 포인트 조회
+            cursor.execute("""
+                SELECT 
+                    COALESCE(SUM(CASE WHEN type = 'EARN' THEN amount ELSE 0 END), 0) AS earned,
+                    COALESCE(SUM(CASE WHEN type = 'USE' THEN ABS(amount) ELSE 0 END), 0) AS used
+                FROM point_history 
+                WHERE visit_id = ?
+            """, (visit_id,))
+            p_row = cursor.fetchone()
+            earned_point = p_row[0] if p_row else 0
+            used_point = p_row[1] if p_row else 0
+
+            # 3. 고객 포인트 원상복구 (적립분 차감, 사용분 복구)
+            net_point_change = used_point - earned_point
+            cursor.execute("""
+                UPDATE customer
+                SET point = MAX(0, point + ?), updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND is_active = 1
+            """, (net_point_change, customer_id))
+
+            # 4. 연관 포인트 이력 삭제
+            cursor.execute("DELETE FROM point_history WHERE visit_id = ?", (visit_id,))
+
+            # 5. visit 삭제 (FK CASCADE로 payment, visit_service 자동 삭제)
+            cursor.execute("DELETE FROM visit WHERE id = ?", (visit_id,))
+
+            conn.commit()
+            return True, "결제가 성공적으로 취소(삭제)되었습니다."
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] cancel_sale_transaction: {e}")
+            return False, f"결제 취소 중 오류 발생: {str(e)}"
+        finally:
+            conn.close()
+
+    # -------------------------------------------------------------
     # Category & Service 헬퍼
     # -------------------------------------------------------------
     def fetch_active_categories_and_services(self):
@@ -559,74 +715,82 @@ class DBManager:
 
         conn.close()
         return categories_data, services_map
-
+    
     def save_all_changes(self, categories_data, services_map):
-        conn = self.get_connection()
-        cursor = conn.cursor()
+            """카테고리 및 시술 정보 변경 사항 저장 (SQL 파라미터 바인딩 오류 수정 완료)"""
+            conn = self.get_connection()
+            cursor = conn.cursor()
 
-        try:
-            cursor.execute("BEGIN TRANSACTION;")
+            try:
+                cursor.execute("BEGIN TRANSACTION;")
 
-            for idx, cat in enumerate(categories_data):
-                cat_id = cat.get("id")
-                name = cat["name"]
-                
-                if name == "선결제" or cat.get("is_system") == 1:
-                    is_active = 1
-                else:
-                    is_active = 0 if cat.get("deleted", False) else 1
-
-                display_order = idx
-
-                if cat_id is None:
-                    cursor.execute("""
-                        INSERT INTO category (name, display_order, is_active, is_system)
-                        VALUES (?, ?, ?, ?)
-                    """, (name, display_order, is_active, 1 if name == "선결제" else 0))
-                    cat["id"] = cursor.lastrowid
-                else:
-                    cursor.execute("""
-                        UPDATE category
-                        SET name = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                    """, (name, display_order, is_active, cat_id))
-
-            for cat in categories_data:
-                cat_id = cat.get("id")
-                cat_name = cat["name"]
-                services = services_map.get(cat_name, [])
-                cat_deleted = cat.get("deleted", False) and cat_name != "선결제"
-
-                for s_idx, svc in enumerate(services):
-                    svc_id = svc.get("id")
-                    svc_name = svc["name"]
-                    price = svc["price"]
-                    display_order = s_idx
+                # 1. 카테고리 저장 및 수정
+                for idx, cat in enumerate(categories_data):
+                    cat_id = cat.get("id")
+                    name = cat["name"]
                     
-                    is_active = 0 if (svc.get("deleted", False) or cat_deleted) else 1
-
-                    if svc_id is None:
-                        cursor.execute("""
-                            INSERT INTO service (category_id, name, price, display_order, is_active)
-                            VALUES (?, ?, ?, ?, ?)
-                        """, (cat_id, svc_name, price, display_order, is_active))
-                        svc["id"] = cursor.lastrowid
+                    if name == "선결제" or cat.get("is_system") == 1:
+                        is_active = 1
                     else:
+                        is_active = 0 if cat.get("deleted", False) else 1
+
+                    display_order = idx
+
+                    if cat_id is None:
+                        # 물음표 4개 <-> 변수 4개
                         cursor.execute("""
-                            UPDATE service
-                            SET category_id = ?, name = ?, price = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+                            INSERT INTO category (name, display_order, is_active, is_system)
+                            VALUES (?, ?, ?, ?)
+                        """, (name, display_order, is_active, 1 if name == "선결제" else 0))
+                        cat["id"] = cursor.lastrowid
+                    else:
+                        # 물음표 4개 <-> 변수 4개
+                        cursor.execute("""
+                            UPDATE category
+                            SET name = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
                             WHERE id = ?
-                        """, (cat_id, svc_name, price, display_order, is_active, svc_id))
+                        """, (name, display_order, is_active, cat_id))
 
-            conn.commit()
-            return True, "변경 사항이 성공적으로 저장되었습니다."
+                # 2. 시술 메뉴 저장 및 수정
+                for cat in categories_data:
+                    cat_id = cat.get("id")
+                    cat_name = cat["name"]
+                    services = services_map.get(cat_name, [])
+                    cat_deleted = cat.get("deleted", False) and cat_name != "선결제"
 
-        except Exception as e:
-            conn.rollback()
-            return False, f"저장 중 오류가 발생했습니다: {str(e)}"
-            
-        finally:
-            conn.close()
+                    for s_idx, svc in enumerate(services):
+                        svc_id = svc.get("id")
+                        svc_name = svc["name"]
+                        price = svc["price"]
+                        display_order = s_idx
+                        
+                        is_active = 0 if (svc.get("deleted", False) or cat_deleted) else 1
+
+                        if svc_id is None:
+                            # 신규 추가: 물음표 5개 <-> 변수 5개 (cat_id, svc_name, price, display_order, is_active)
+                            cursor.execute("""
+                                INSERT INTO service (category_id, name, price, display_order, is_active)
+                                VALUES (?, ?, ?, ?, ?)
+                            """, (cat_id, svc_name, price, display_order, is_active))
+                            svc["id"] = cursor.lastrowid
+                        else:
+                            # 기존 수정: 물음표 6개 <-> 변수 6개 (cat_id, svc_name, price, display_order, is_active, svc_id)
+                            cursor.execute("""
+                                UPDATE service
+                                SET category_id = ?, name = ?, price = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                            """, (cat_id, svc_name, price, display_order, is_active, svc_id))
+
+                conn.commit()
+                return True, "변경 사항이 성공적으로 저장되었습니다."
+
+            except Exception as e:
+                conn.rollback()
+                print(f"[DB Error] save_all_changes: {e}")
+                return False, f"저장 중 오류가 발생했습니다: {str(e)}"
+                
+            finally:
+                conn.close()
 
     # -------------------------------------------------------------
     # User / Designer CRUD 헬퍼

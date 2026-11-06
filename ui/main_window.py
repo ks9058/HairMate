@@ -8,6 +8,7 @@ from PySide6.QtGui import QFont
 from ui.theme import Colors, Styles, get_icon, load_fonts
 from ui.customer_view import CustomerView
 from ui.sales_registration_view import SalesRegistrationView
+from ui.sales_cancel_view import SalesCancelView
 from ui.settings_google_view import SettingsGoogleView
 from ui.settings_category_view import SettingsCategoryView
 from ui.settings_point_view import SettingsPointView  
@@ -119,18 +120,27 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(logo_container)
 
         self.btn_customer = SidebarButton("  고객관리", "customer.svg")
-        self.btn_sales_reg = SidebarButton("  매출등록", "sales_registration.svg")
+        self.btn_sales_reg = SidebarButton("  결제등록", "sales_registration.svg")
+        self.btn_sales_cancel = SidebarButton("  결제취소", "sales_cancel.svg")
         self.btn_sales_analysis = SidebarButton("  매출분석", "sales_statistics.svg")
         self.btn_setting = SidebarButton("  설정", "setting.svg")
 
-        self.menu_buttons = [self.btn_customer, self.btn_sales_reg, self.btn_sales_analysis, self.btn_setting]
+        self.menu_buttons = [
+            self.btn_customer, 
+            self.btn_sales_reg, 
+            self.btn_sales_cancel, 
+            self.btn_sales_analysis, 
+            self.btn_setting
+        ]
 
         sidebar_layout.addWidget(self.btn_customer)
         sidebar_layout.addWidget(self.btn_sales_reg)
+        sidebar_layout.addWidget(self.btn_sales_cancel)
         sidebar_layout.addWidget(self.btn_sales_analysis)
 
         self.btn_customer.clicked.connect(self.show_customer_page)
         self.btn_sales_reg.clicked.connect(self.show_sales_reg_page)
+        self.btn_sales_cancel.clicked.connect(self.show_sales_cancel_page)
 
         self.sub_menu_container = QWidget(sidebar)
         sub_layout = QVBoxLayout(self.sub_menu_container)
@@ -212,7 +222,7 @@ class MainWindow(QMainWindow):
 
         right_layout.addWidget(header)
 
-        # 2.2 중앙 Stacked Widget 영역
+        # 2.2 중앙 QStackedWidget 영역
         self.stack = QStackedWidget(right_panel)
         self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.stack.setStyleSheet(f"background-color: {Colors.BACKGROUND};")
@@ -222,6 +232,9 @@ class MainWindow(QMainWindow):
 
         self.sales_reg_page = SalesRegistrationView()
         self.stack.addWidget(self.sales_reg_page)
+
+        self.sales_cancel_page = SalesCancelView()
+        self.stack.addWidget(self.sales_cancel_page)
 
         self.google_setting_page = SettingsGoogleView()
         self.stack.addWidget(self.google_setting_page)
@@ -235,7 +248,7 @@ class MainWindow(QMainWindow):
         self.category_setting_page = SettingsCategoryView()
         self.stack.addWidget(self.category_setting_page)
 
-        # 뒤로가기 버튼 클릭 시 결제 취소 확인 팝업 호출 함수 연결
+        # 뒤로가기 버튼 클릭 시 결제 취소 확인 팝업 호출 연동
         self.btn_top_back.clicked.connect(self.sales_reg_page.confirm_and_clear_selection)
         self.sales_reg_page.page_changed.connect(self.btn_top_back.setVisible)
 
@@ -271,6 +284,14 @@ class MainWindow(QMainWindow):
         self.btn_top_back.setVisible(is_in_dashboard)
 
         self.stack.setCurrentWidget(self.sales_reg_page)
+
+    def show_sales_cancel_page(self):
+        self.btn_top_back.setVisible(False)
+        self.select_main_button(self.btn_sales_cancel)
+        for btn in self.sub_buttons:
+            btn.setChecked(False)
+        self.sales_cancel_page.load_sales_data(use_date_filter=False)
+        self.stack.setCurrentWidget(self.sales_cancel_page)
 
     def select_sub_button(self, target_btn):
         self.btn_top_back.setVisible(False)
