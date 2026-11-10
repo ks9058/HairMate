@@ -186,7 +186,7 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
-        # 2.1 상단 날짜 헤더
+        # 2.1 상단 날짜 헤더 (상단 가로선)
         header = QFrame(right_panel)
         header.setFixedHeight(50)
         header.setStyleSheet(f"background-color: {Colors.BACKGROUND}; border-bottom: 1.5px solid {Colors.PRIMARY};")
@@ -201,11 +201,13 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(lbl_date)
         header_layout.addStretch()
 
-        # 상단 가로선 위의 ← 뒤로가기 버튼
+        # 상단 가로선 위의 공통 ← 뒤로가기 버튼
         self.btn_top_back = QPushButton("← 뒤로가기", header)
         self.btn_top_back.setFixedSize(110, 32)
         self.btn_top_back.setCursor(Qt.PointingHandCursor)
-        self.btn_top_back.setFont(QFont("Inter", 11, QFont.Bold))
+        btn_font = QFont("Inter", 11)
+        btn_font.setBold(True)
+        self.btn_top_back.setFont(btn_font)
         self.btn_top_back.setStyleSheet(f"""
             QPushButton {{
                 background-color: {Colors.PRIMARY};
@@ -248,9 +250,12 @@ class MainWindow(QMainWindow):
         self.category_setting_page = SettingsCategoryView()
         self.stack.addWidget(self.category_setting_page)
 
-        # 뒤로가기 버튼 클릭 시 결제 취소 확인 팝업 호출 연동
-        self.btn_top_back.clicked.connect(self.sales_reg_page.confirm_and_clear_selection)
-        self.sales_reg_page.page_changed.connect(self.btn_top_back.setVisible)
+        # 💡 상단 헤더 [← 뒤로가기] 버튼 클릭 이벤트 핸들러 분기 처리
+        self.btn_top_back.clicked.connect(self.handle_top_back_click)
+
+        # 각 뷰의 페이지 전환 신호 수신
+        self.sales_reg_page.page_changed.connect(self.on_sales_reg_page_changed)
+        self.customer_page.page_changed.connect(self.on_customer_page_changed)
 
         self.show_customer_page()
 
@@ -260,16 +265,35 @@ class MainWindow(QMainWindow):
         for btn in self.sub_buttons:
             btn.clicked.connect(lambda checked=False, target=btn: self.select_sub_button(target))
 
+    def handle_top_back_click(self):
+        """현재 화면에 맞춰 상단 뒤로가기 동작 수행"""
+        current_widget = self.stack.currentWidget()
+        if current_widget == self.sales_reg_page:
+            self.sales_reg_page.confirm_and_clear_selection()
+        elif current_widget == self.customer_page:
+            self.customer_page.reset_form()
+
+    def on_sales_reg_page_changed(self, is_in_dashboard: bool):
+        if self.stack.currentWidget() == self.sales_reg_page:
+            self.btn_top_back.setVisible(is_in_dashboard)
+
+    def on_customer_page_changed(self, is_in_detail: bool):
+        if self.stack.currentWidget() == self.customer_page:
+            self.btn_top_back.setVisible(is_in_detail)
+
     def select_main_button(self, target_btn):
         for btn in self.menu_buttons:
             btn.setChecked(btn == target_btn)
 
     def show_customer_page(self):
-        self.btn_top_back.setVisible(False)
         self.select_main_button(self.btn_customer)
         for btn in self.sub_buttons:
             btn.setChecked(False)
         self.customer_page.load_customer_list()
+        
+        is_in_detail = (self.customer_page.right_stack.currentIndex() == 1)
+        self.btn_top_back.setVisible(is_in_detail)
+
         self.stack.setCurrentWidget(self.customer_page)
 
     def show_sales_reg_page(self):
