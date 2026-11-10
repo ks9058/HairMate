@@ -9,6 +9,7 @@ from ui.theme import Colors, Styles, get_icon, load_fonts
 from ui.customer_view import CustomerView
 from ui.sales_registration_view import SalesRegistrationView
 from ui.sales_cancel_view import SalesCancelView
+from ui.sales_analytics_view import SalesAnalyticsView  # 💡 이슈 13&14 매출분석 뷰 추가
 from ui.settings_google_view import SettingsGoogleView
 from ui.settings_category_view import SettingsCategoryView
 from ui.settings_point_view import SettingsPointView  
@@ -138,9 +139,11 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.btn_sales_cancel)
         sidebar_layout.addWidget(self.btn_sales_analysis)
 
+        # 사이드바 버튼 시그널-슬롯 연결
         self.btn_customer.clicked.connect(self.show_customer_page)
         self.btn_sales_reg.clicked.connect(self.show_sales_reg_page)
         self.btn_sales_cancel.clicked.connect(self.show_sales_cancel_page)
+        self.btn_sales_analysis.clicked.connect(self.show_sales_analytics_page)  # 💡 매출분석 이벤트 연결
 
         self.sub_menu_container = QWidget(sidebar)
         sub_layout = QVBoxLayout(self.sub_menu_container)
@@ -238,6 +241,9 @@ class MainWindow(QMainWindow):
         self.sales_cancel_page = SalesCancelView()
         self.stack.addWidget(self.sales_cancel_page)
 
+        self.sales_analytics_page = SalesAnalyticsView()  # 💡 이슈 13&14 매출분석 뷰 인스턴스화
+        self.stack.addWidget(self.sales_analytics_page)
+
         self.google_setting_page = SettingsGoogleView()
         self.stack.addWidget(self.google_setting_page)
 
@@ -250,7 +256,7 @@ class MainWindow(QMainWindow):
         self.category_setting_page = SettingsCategoryView()
         self.stack.addWidget(self.category_setting_page)
 
-        # 💡 상단 헤더 [← 뒤로가기] 버튼 클릭 이벤트 핸들러 분기 처리
+        # 상단 헤더 [← 뒤로가기] 버튼 클릭 이벤트 핸들러 분기 처리
         self.btn_top_back.clicked.connect(self.handle_top_back_click)
 
         # 각 뷰의 페이지 전환 신호 수신
@@ -316,6 +322,21 @@ class MainWindow(QMainWindow):
             btn.setChecked(False)
         self.sales_cancel_page.load_sales_data(use_date_filter=False)
         self.stack.setCurrentWidget(self.sales_cancel_page)
+
+    def show_sales_analytics_page(self):
+        """매출분석 화면 호출 메서드"""
+        self.btn_top_back.setVisible(False)
+        self.select_main_button(self.btn_sales_analysis)
+        for btn in self.sub_buttons:
+            btn.setChecked(False)
+        
+        self.sales_analytics_page.load_designers()
+        if self.sales_analytics_page.stack.currentIndex() == 0:
+            self.sales_analytics_page.refresh_daily_analysis()
+        else:
+            self.sales_analytics_page.refresh_period_analysis()
+
+        self.stack.setCurrentWidget(self.sales_analytics_page)
 
     def select_sub_button(self, target_btn):
         self.btn_top_back.setVisible(False)
