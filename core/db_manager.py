@@ -1,6 +1,8 @@
 import sqlite3
 import os
 from dotenv import load_dotenv
+import calendar
+from datetime import datetime, timedelta
 
 load_dotenv()
 
@@ -404,7 +406,7 @@ class DBManager:
             
             visit_id = cursor.lastrowid
 
-            # 2. visit_service 상세 저장 (quantity 컬럼에 item["qty"] 저장)
+            # 2. visit_service 상세 저장
             for item in cart_items:
                 cursor.execute("""
                     INSERT INTO visit_service (visit_id, service_id, user_id, price, quantity)
@@ -448,7 +450,7 @@ class DBManager:
             conn.close()
 
     def get_customer_visit_history(self, customer_id: int):
-        """특정 고객 방문 이력 및 시술 항목별 선택 수량 조회 (SUM으로 수량 합산)"""
+        """특정 고객 방문 이력 및 시술 항목별 선택 수량 조회"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -510,7 +512,7 @@ class DBManager:
             conn.close()
 
     def get_customer_stats(self, customer_id: int):
-        """특정 고객 방문 통계 데이터 (방문 횟수, 총/평균 금액, 총/평균 시술시간, 시술 선호도 및 세부 시술 내역) 조회"""
+        """특정 고객 방문 통계 데이터 조회"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -549,7 +551,6 @@ class DBManager:
             total_dur = int(stat[3]) if stat else 0
             avg_dur = int(stat[4]) if stat else 0
 
-            # 카테고리별 시술 선호도 및 세부 시술별 결제 수량 집계
             cursor.execute("""
                 SELECT cat.id, cat.name, SUM(COALESCE(vs.quantity, 1))
                 FROM visit_service vs
@@ -598,12 +599,12 @@ class DBManager:
             }
         finally:
             conn.close()
-            
+
     # -------------------------------------------------------------
     # Sales Cancel (결제 취소) 헬퍼
     # -------------------------------------------------------------
     def get_sales_cancel_list(self, query: str = "", date_str: str = ""):
-        """결제 취소 화면용 목록 조회 (최신순 정렬, 수량 2개 이상일 경우 표시)"""
+        """결제 취소 화면용 목록 조회"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -712,13 +713,12 @@ class DBManager:
             conn.close()
 
     def cancel_sale_transaction(self, visit_id: int) -> tuple[bool, str]:
-        """결제 취소 트랜잭션: 포인트 원상복구(적립 차감 & 사용 복원) 후 visit/payment/visit_service 삭제"""
+        """결제 취소 트랜잭션"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute("BEGIN TRANSACTION;")
 
-            # 1. 대상 visit 조회
             cursor.execute("SELECT customer_id FROM visit WHERE id = ?", (visit_id,))
             row = cursor.fetchone()
             if not row:
@@ -726,7 +726,6 @@ class DBManager:
                 return False, "존재하지 않는 결제 내역입니다."
             customer_id = row[0]
 
-            # 2. 해당 결제건으로 적립된 포인트 / 사용된 포인트 조회
             cursor.execute("""
                 SELECT 
                     COALESCE(SUM(CASE WHEN type = 'EARN' THEN amount ELSE 0 END), 0) AS earned,
@@ -738,7 +737,6 @@ class DBManager:
             earned_point = p_row[0] if p_row else 0
             used_point = p_row[1] if p_row else 0
 
-            # 3. 고객 포인트 원상복구 (적립분 차감, 사용분 복구)
             net_point_change = used_point - earned_point
             cursor.execute("""
                 UPDATE customer
@@ -746,10 +744,7 @@ class DBManager:
                 WHERE id = ? AND is_active = 1
             """, (net_point_change, customer_id))
 
-            # 4. 연관 포인트 이력 삭제
             cursor.execute("DELETE FROM point_history WHERE visit_id = ?", (visit_id,))
-
-            # 5. visit 삭제 (FK CASCADE로 payment, visit_service 자동 삭제)
             cursor.execute("DELETE FROM visit WHERE id = ?", (visit_id,))
 
             conn.commit()
@@ -793,14 +788,12 @@ class DBManager:
         return categories_data, services_map
     
     def save_all_changes(self, categories_data, services_map):
-        """카테고리 및 시술 정보 변경 사항 저장"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
         try:
             cursor.execute("BEGIN TRANSACTION;")
 
-            # 1. 카테고리 저장 및 수정
             for idx, cat in enumerate(categories_data):
                 cat_id = cat.get("id")
                 name = cat["name"]
@@ -825,7 +818,6 @@ class DBManager:
                         WHERE id = ?
                     """, (name, display_order, is_active, cat_id))
 
-            # 2. 시술 메뉴 저장 및 수정
             for cat in categories_data:
                 cat_id = cat.get("id")
                 cat_name = cat["name"]
@@ -935,5 +927,365 @@ class DBManager:
             conn.rollback()
             print(f"[DB Error] delete_designer: {e}")
             return False
+        finally:
+            conn.close()
+
+    # -------------------------------------------------------------
+    # Issue 13 & 14: 통계 분석 헬퍼 메서드
+    # -------------------------------------------------------------
+    def get_daily_sales_analysis(self):
+        """금일 매출 분석 4종 KPI 카드, 결제 수단별 금액/비율, 전월 대비 매출 비교 및 TOP3 시술 집계"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # 1. 오늘 매출 & 방문자 수 & 객단가
+            cursor.execute("""
+                SELECT COALESCE(SUM(total_amount), 0), COUNT(id)
+                FROM visit
+                WHERE strftime('%Y-%m-%d', visited_at) = strftime('%Y-%m-%d', 'now', 'localtime')
+            """)
+            today_row = cursor.fetchone()
+            today_sales = today_row[0]
+            today_visitors = today_row[1]
+            today_customer_spend = int(today_sales / today_visitors) if today_visitors > 0 else 0
+
+            # 2. 어제 매출 & 방문자 수
+            cursor.execute("""
+                SELECT COALESCE(SUM(total_amount), 0), COUNT(id)
+                FROM visit
+                WHERE strftime('%Y-%m-%d', visited_at) = strftime('%Y-%m-%d', 'now', 'localtime', '-1 day')
+            """)
+            yesterday_row = cursor.fetchone()
+            yesterday_sales = yesterday_row[0]
+            yesterday_visitors = yesterday_row[1]
+
+            # 3. 일일 평균 매출
+            cursor.execute("""
+                SELECT COUNT(DISTINCT strftime('%Y-%m-%d', visited_at)),
+                       COALESCE(SUM(total_amount), 0)
+                FROM visit
+            """)
+            total_days_row = cursor.fetchone()
+            active_days = total_days_row[0] or 1
+            all_sales = total_days_row[1]
+            avg_daily_sales = int(all_sales / active_days) if active_days > 0 else 0
+
+            # 4. 금일 결제 수단별 금액 및 비율 (카드, 현금, 포인트/선결제)
+            today_payments = {"카드": 0, "현금": 0, "포인트": 0}
+
+            cursor.execute("""
+                SELECT 
+                    p.payment_method,
+                    COALESCE(SUM(p.amount), 0)
+                FROM payment p
+                JOIN visit v ON p.visit_id = v.id
+                WHERE strftime('%Y-%m-%d', v.visited_at) = strftime('%Y-%m-%d', 'now', 'localtime')
+                GROUP BY p.payment_method
+            """)
+            for row in cursor.fetchall():
+                pm = (row[0] or "").lower()
+                amt = row[1] or 0
+                if "카드" in pm or "card" in pm:
+                    today_payments["카드"] += amt
+                elif "현금" in pm or "cash" in pm:
+                    today_payments["현금"] += amt
+                elif "포인트" in pm or "선결제" in pm or "point" in pm or "적립" in pm:
+                    today_payments["포인트"] += amt
+                else:
+                    today_payments["카드"] += amt
+
+            cursor.execute("""
+                SELECT COALESCE(SUM(used_point), 0)
+                FROM visit
+                WHERE strftime('%Y-%m-%d', visited_at) = strftime('%Y-%m-%d', 'now', 'localtime')
+            """)
+            v_used_point = cursor.fetchone()[0] or 0
+
+            cursor.execute("""
+                SELECT COALESCE(SUM(ABS(amount)), 0)
+                FROM point_history ph
+                JOIN visit v ON ph.visit_id = v.id
+                WHERE ph.type = 'USE' AND strftime('%Y-%m-%d', v.visited_at) = strftime('%Y-%m-%d', 'now', 'localtime')
+            """)
+            history_used_point = cursor.fetchone()[0] or 0
+
+            point_amt = max(today_payments["포인트"], v_used_point, history_used_point)
+            today_payments["포인트"] = point_amt
+
+            t_card = today_payments["카드"]
+            t_cash = today_payments["현금"]
+            t_point = today_payments["포인트"]
+            t_sum = t_card + t_cash + t_point
+
+            card_share = round((t_card / t_sum) * 100, 1) if t_sum > 0 else 0.0
+            cash_share = round((t_cash / t_sum) * 100, 1) if t_sum > 0 else 0.0
+            point_share = round((t_point / t_sum) * 100, 1) if t_sum > 0 else 0.0
+
+            # 5. 전월 대비 같은 기간 매출 비교
+            now = datetime.now()
+            curr_year = now.year
+            curr_month = now.month
+            curr_day = now.day
+
+            this_month_start = f"{curr_year:04d}-{curr_month:02d}-01"
+            this_month_end = f"{curr_year:04d}-{curr_month:02d}-{curr_day:02d}"
+
+            cursor.execute("""
+                SELECT COALESCE(SUM(total_amount), 0)
+                FROM visit
+                WHERE strftime('%Y-%m-%d', visited_at) BETWEEN ? AND ?
+            """, (this_month_start, this_month_end))
+            this_month_sales = cursor.fetchone()[0]
+
+            if curr_month == 1:
+                prev_year = curr_year - 1
+                prev_month = 12
+            else:
+                prev_year = curr_year
+                prev_month = curr_month - 1
+
+            prev_month_start = f"{prev_year:04d}-{prev_month:02d}-01"
+            max_days_prev = calendar.monthrange(prev_year, prev_month)[1]
+            target_prev_day = min(curr_day, max_days_prev)
+            prev_month_end = f"{prev_year:04d}-{prev_month:02d}-{target_prev_day:02d}"
+
+            cursor.execute("""
+                SELECT COALESCE(SUM(total_amount), 0)
+                FROM visit
+                WHERE strftime('%Y-%m-%d', visited_at) BETWEEN ? AND ?
+            """, (prev_month_start, prev_month_end))
+            prev_month_sales = cursor.fetchone()[0]
+
+            if prev_month_sales > 0:
+                diff_percent = round(((this_month_sales - prev_month_sales) / prev_month_sales) * 100, 1)
+            else:
+                diff_percent = 100.0 if this_month_sales > 0 else 0.0
+
+            # 6. 오늘 판매 TOP 3
+            cursor.execute("""
+                SELECT 
+                    s.name,
+                    SUM(COALESCE(vs.quantity, 1)) AS total_qty,
+                    SUM(vs.price * COALESCE(vs.quantity, 1)) AS total_price
+                FROM visit_service vs
+                JOIN service s ON vs.service_id = s.id
+                JOIN visit v ON vs.visit_id = v.id
+                WHERE strftime('%Y-%m-%d', v.visited_at) = strftime('%Y-%m-%d', 'now', 'localtime')
+                GROUP BY s.id
+                ORDER BY total_qty DESC, total_price DESC
+                LIMIT 3
+            """)
+            top3_rows = cursor.fetchall()
+            top3_list = [{
+                "name": r[0],
+                "count": r[1],
+                "price": r[2]
+            } for r in top3_rows]
+
+            return {
+                "today_sales": today_sales,
+                "today_visitors": today_visitors,
+                "today_customer_spend": today_customer_spend,
+                "yesterday_sales": yesterday_sales,
+                "yesterday_visitors": yesterday_visitors,
+                "avg_daily_sales": avg_daily_sales,
+                "today_payments": {
+                    "card_amount": t_card,
+                    "card_share": card_share,
+                    "cash_amount": t_cash,
+                    "cash_share": cash_share,
+                    "point_amount": t_point,
+                    "point_share": point_share,
+                },
+                "this_month": curr_month,
+                "this_month_sales": this_month_sales,
+                "prev_month": prev_month,
+                "prev_month_sales": prev_month_sales,
+                "diff_percent": diff_percent,
+                "top3": top3_list
+            }
+        except Exception as e:
+            print(f"[DB Error] get_daily_sales_analysis: {e}")
+            return {
+                "today_sales": 0, "today_visitors": 0, "today_customer_spend": 0,
+                "yesterday_sales": 0, "yesterday_visitors": 0,
+                "avg_daily_sales": 0,
+                "today_payments": {
+                    "card_amount": 0, "card_share": 0.0,
+                    "cash_amount": 0, "cash_share": 0.0,
+                    "point_amount": 0, "point_share": 0.0,
+                },
+                "this_month": 1, "this_month_sales": 0,
+                "prev_month": 12, "prev_month_sales": 0,
+                "diff_percent": 0.0, "top3": []
+            }
+        finally:
+            conn.close()
+
+    def get_period_sales_analysis(self, start_date: str, end_date: str, designer_id: str = "all"):
+        """기간별 상세 매출 분석 (1일=시간대별, ~31일=일별, ~180일=주별, ~1095일=월별, 그이상=년도별)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            params = [start_date, end_date]
+            designer_where = ""
+            if designer_id and designer_id != "all":
+                designer_where = " AND v.user_id = ? "
+                params.append(designer_id)
+
+            # 1. 총 매출 & 방문자 수
+            cursor.execute(f"""
+                SELECT COALESCE(SUM(v.total_amount), 0), COUNT(DISTINCT v.id)
+                FROM visit v
+                WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
+            """, params)
+            sales_row = cursor.fetchone()
+            total_sales = sales_row[0]
+            visit_count = sales_row[1]
+
+            # 2. 총 시술 시간 (v.total_duration_minutes)
+            cursor.execute(f"""
+                SELECT COALESCE(SUM(v.total_duration_minutes), 0)
+                FROM visit v
+                WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
+            """, params)
+            total_duration = cursor.fetchone()[0]
+
+            # 3. 기간 내 일수 계산
+            d1 = datetime.strptime(start_date, "%Y-%m-%d")
+            d2 = datetime.strptime(end_date, "%Y-%m-%d")
+            days_span = (d2 - d1).days + 1
+            avg_daily_sales = int(total_sales / days_span) if days_span > 0 else 0
+
+            # 4. 전체 대비 매출 기여도 (%)
+            cursor.execute("""
+                SELECT COALESCE(SUM(total_amount), 0)
+                FROM visit
+                WHERE strftime('%Y-%m-%d', visited_at) BETWEEN ? AND ?
+            """, (start_date, end_date))
+            all_store_sales = cursor.fetchone()[0]
+            if all_store_sales > 0:
+                contribution = round((total_sales / all_store_sales) * 100, 1)
+            else:
+                contribution = 100.0 if total_sales > 0 else 0.0
+
+            # 5. 결제 수단별 매출액
+            payments = {"카드": 0, "현금": 0, "포인트": 0}
+
+            cursor.execute(f"""
+                SELECT 
+                    p.payment_method,
+                    COALESCE(SUM(p.amount), 0)
+                FROM payment p
+                JOIN visit v ON p.visit_id = v.id
+                WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
+                GROUP BY p.payment_method
+            """, params)
+
+            for row in cursor.fetchall():
+                pm = (row[0] or "").lower()
+                amt = row[1] or 0
+                if "카드" in pm or "card" in pm:
+                    payments["카드"] += amt
+                elif "현금" in pm or "cash" in pm:
+                    payments["현금"] += amt
+                elif "포인트" in pm or "선결제" in pm or "point" in pm or "적립" in pm:
+                    payments["포인트"] += amt
+                else:
+                    payments["카드"] += amt
+
+            cursor.execute(f"""
+                SELECT COALESCE(SUM(v.used_point), 0)
+                FROM visit v
+                WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
+            """, params)
+            v_used_point = cursor.fetchone()[0] or 0
+            if v_used_point > payments["포인트"]:
+                payments["포인트"] = v_used_point
+
+            # 6. 직관적인 기간별 추이 데이터 집계
+            trend_data = []
+
+            if days_span == 1:
+                # 1일: 시간대별 집계 (예: 09시, 10시...)
+                query_params = [start_date]
+                if designer_id and designer_id != "all":
+                    query_params.append(designer_id)
+
+                cursor.execute(f"""
+                    SELECT strftime('%H시', v.visited_at) as hr, COALESCE(SUM(v.total_amount), 0)
+                    FROM visit v
+                    WHERE strftime('%Y-%m-%d', v.visited_at) = ? {designer_where}
+                    GROUP BY hr ORDER BY hr ASC
+                """, query_params)
+                for r in cursor.fetchall():
+                    trend_data.append({"label": r[0], "amount": r[1]})
+
+            elif days_span <= 31:
+                # 2일 ~ 31일: 일별 집계 (예: 11-01, 11-02...)
+                cursor.execute(f"""
+                    SELECT strftime('%Y-%m-%d', v.visited_at) as dt, COALESCE(SUM(v.total_amount), 0)
+                    FROM visit v
+                    WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
+                    GROUP BY dt ORDER BY dt ASC
+                """, params)
+                rows = dict(cursor.fetchall())
+                curr = d1
+                while curr <= d2:
+                    dt_str = curr.strftime("%Y-%m-%d")
+                    trend_data.append({"label": dt_str[5:], "amount": rows.get(dt_str, 0)})
+                    curr += timedelta(days=1)
+
+            elif days_span <= 180:
+                # 32일 ~ 180일 (약 6개월): 주별 집계 (예: 11-1주, 11-2주...)
+                cursor.execute(f"""
+                    SELECT strftime('%m월-%W주', v.visited_at) as wk, COALESCE(SUM(v.total_amount), 0)
+                    FROM visit v
+                    WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
+                    GROUP BY wk ORDER BY wk ASC
+                """, params)
+                for r in cursor.fetchall():
+                    trend_data.append({"label": r[0], "amount": r[1]})
+
+            elif days_span <= 1095:
+                # 181일 ~ 3년: 월별 집계 (예: 24년 11월...)
+                cursor.execute(f"""
+                    SELECT strftime('%Y-%m월', v.visited_at) as mn, COALESCE(SUM(v.total_amount), 0)
+                    FROM visit v
+                    WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
+                    GROUP BY mn ORDER BY mn ASC
+                """, params)
+                for r in cursor.fetchall():
+                    trend_data.append({"label": r[0][2:], "amount": r[1]})
+
+            else:
+                # 3년 초과: 년도별 집계 (예: 2024년...)
+                cursor.execute(f"""
+                    SELECT strftime('%Y년', v.visited_at) as yr, COALESCE(SUM(v.total_amount), 0)
+                    FROM visit v
+                    WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
+                    GROUP BY yr ORDER BY yr ASC
+                """, params)
+                for r in cursor.fetchall():
+                    trend_data.append({"label": r[0], "amount": r[1]})
+
+            return {
+                "total_sales": total_sales,
+                "visit_count": visit_count,
+                "avg_daily_sales": avg_daily_sales,
+                "total_duration": total_duration,
+                "contribution": contribution,
+                "payments": payments,
+                "days_span": days_span,
+                "trend_data": trend_data
+            }
+        except Exception as e:
+            print(f"[DB Error] get_period_sales_analysis: {e}")
+            return {
+                "total_sales": 0, "visit_count": 0, "avg_daily_sales": 0,
+                "total_duration": 0, "contribution": 0.0,
+                "payments": {"카드": 0, "현금": 0, "포인트": 0},
+                "days_span": 1, "trend_data": []
+            }
         finally:
             conn.close()
