@@ -2,11 +2,11 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
     QFrame, QMessageBox, QAbstractItemView, QDialog, QStackedWidget,
-    QTextEdit, QProgressBar
+    QTextEdit, QProgressBar, QToolTip
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QTextDocument
-from ui.theme import Colors, Styles, get_icon
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QTextDocument, QCursor
+from ui.theme import Colors, get_icon
 from core.db_manager import DBManager
 
 
@@ -36,8 +36,63 @@ SCROLLBAR_STYLE = """
 """
 
 
+class PreferenceBarRow(QWidget):
+    """시술 선호도 개별 항목 행 (호버 시 툴팁 즉시 팝업 표시)"""
+
+    def __init__(self, cat_name: str, cnt: int, max_cnt: int, bar_color: str, tooltip_text: str, parent=None):
+        super().__init__(parent)
+        self.tooltip_text = tooltip_text
+        self.setToolTip(tooltip_text)
+        self.setMouseTracking(True)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        lbl_cat = QLabel(cat_name, self)
+        lbl_cat.setFont(QFont("Inter", 10, QFont.Bold))
+        lbl_cat.setFixedWidth(55)
+        lbl_cat.setAlignment(Qt.AlignCenter)
+        lbl_cat.setStyleSheet("color: #000000; background: transparent; border: none;")
+        lbl_cat.setToolTip(tooltip_text)
+
+        pbar = QProgressBar(self)
+        pbar.setFixedHeight(24)
+        pbar.setMaximum(max_cnt)
+        pbar.setValue(cnt)
+        pbar.setTextVisible(False)
+        pbar.setToolTip(tooltip_text)
+        pbar.setStyleSheet(f"""
+            QProgressBar {{
+                border: none;
+                background-color: #EFEFEF;
+                border-radius: 4px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {bar_color};
+                border-radius: 4px;
+            }}
+        """)
+
+        lbl_cnt = QLabel(f"{cnt}회", self)
+        lbl_cnt.setFont(QFont("Inter", 10, QFont.Bold))
+        lbl_cnt.setFixedWidth(36)
+        lbl_cnt.setAlignment(Qt.AlignCenter)
+        lbl_cnt.setStyleSheet("color: #000000; background: transparent; border: none;")
+        lbl_cnt.setToolTip(tooltip_text)
+
+        layout.addWidget(lbl_cat)
+        layout.addWidget(pbar, 1)
+        layout.addWidget(lbl_cnt)
+
+    def enterEvent(self, event):
+        if self.tooltip_text:
+            QToolTip.showText(QCursor.pos(), self.tooltip_text, self)
+        super().enterEvent(event)
+
+
 class RoundedHeader(QHeaderView):
-    """상단 양쪽 모서리만 라운드 적용 커스텀 헤더 뷰 (세로 경계선 제거 및 통일 UI)"""
+    """상단 양쪽 모서리 라운드 적용 커스텀 헤더 뷰"""
 
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
@@ -92,7 +147,7 @@ class RoundedHeader(QHeaderView):
 
 
 class ConfirmCustomerDeleteDialog(QDialog):
-    """와이어프레임 1:1 매칭 고객 삭제 확인 팝업 모달"""
+    """고객 삭제 확인 팝업 모달"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -156,6 +211,15 @@ class ConfirmCustomerDeleteDialog(QDialog):
 
 class CustomerView(QWidget):
     """고객 관리 메인 뷰"""
+    page_changed = Signal(bool)
+
+    CATEGORY_COLORS = {
+        "커트": "#D4AF37",    # 골드 / 노랑
+        "펌": "#EEDCBA",      # 베이지 / 크림
+        "염색": "#1F3A60",    # 다크 네이비
+        "선결제": "#9B8AA8"   # 퍼플 / 라벤더
+    }
+    DEFAULT_COLORS = ["#00594C", "#E67E22", "#2980B9", "#8E44AD", "#27AE60"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -175,12 +239,7 @@ class CustomerView(QWidget):
         # 1. 좌측 고객 목록 패널 (가로 비율 2)
         # -------------------------------------------------------------
         left_outer = QFrame(self)
-        left_outer.setStyleSheet("""
-            QFrame {
-                background-color: #DCDCDC;
-                border-radius: 10px;
-            }
-        """)
+        left_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         left_outer.setAttribute(Qt.WA_StyledBackground, True)
 
         left_layout = QVBoxLayout(left_outer)
@@ -190,12 +249,7 @@ class CustomerView(QWidget):
         # 1.1 상단 검색바
         search_box = QFrame(left_outer)
         search_box.setFixedHeight(42)
-        search_box.setStyleSheet("""
-            QFrame {
-                background-color: #FFFFFF;
-                border-radius: 6px;
-            }
-        """)
+        search_box.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
         search_box.setAttribute(Qt.WA_StyledBackground, True)
 
         search_layout = QHBoxLayout(search_box)
@@ -209,13 +263,7 @@ class CustomerView(QWidget):
         self.txt_search = QLineEdit(search_box)
         self.txt_search.setPlaceholderText("이름 또는 전화번호")
         self.txt_search.setFont(QFont("Inter", 12))
-        self.txt_search.setStyleSheet("""
-            QLineEdit {
-                border: none;
-                background-color: transparent;
-                color: #000000;
-            }
-        """)
+        self.txt_search.setStyleSheet("border: none; background-color: transparent; color: #000000;")
         self.txt_search.textChanged.connect(self.filter_customer_list)
 
         search_layout.addWidget(lbl_search_icon)
@@ -223,14 +271,9 @@ class CustomerView(QWidget):
 
         left_layout.addWidget(search_box)
 
-        # 1.2 테이블 위젯 (매출 등록 화면과 동일한 RoundedHeader 및 스타일 구성)
+        # 1.2 테이블 위젯
         table_container = QFrame(left_outer)
-        table_container.setStyleSheet("""
-            QFrame {
-                background-color: #FFFFFF;
-                border-radius: 6px;
-            }
-        """)
+        table_container.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
         table_container.setAttribute(Qt.WA_StyledBackground, True)
 
         table_layout = QVBoxLayout(table_container)
@@ -267,10 +310,6 @@ class CustomerView(QWidget):
                 padding: 8px;
                 outline: none;
             }
-            QTableWidget::item:focus {
-                border-bottom: 1px solid #E0E0E0;
-                outline: none;
-            }
             QTableWidget::item:selected {
                 background-color: #E8F5E9;
                 color: #000000;
@@ -281,7 +320,7 @@ class CustomerView(QWidget):
         self.table.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
 
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Fixed)
+        header.setSectionResizeMode(QHeaderView.Stretch)
 
         self.table.itemSelectionChanged.connect(self.on_table_selection_changed)
         table_layout.addWidget(self.table)
@@ -297,12 +336,9 @@ class CustomerView(QWidget):
         right_main_layout.setContentsMargins(0, 0, 0, 0)
         right_main_layout.setSpacing(10)
 
-        # 2.1 Stacked Widget
         self.right_stack = QStackedWidget(self.right_container)
         
-        # -------------------------------------------------------------
         # Page 0: 신규 고객 등록 화면
-        # -------------------------------------------------------------
         page_reg = QWidget()
         page_reg_layout = QVBoxLayout(page_reg)
         page_reg_layout.setContentsMargins(0, 0, 0, 0)
@@ -322,24 +358,14 @@ class CustomerView(QWidget):
         reg_layout.addWidget(lbl_reg_title)
 
         reg_outer = QFrame(reg_container)
-        reg_outer.setStyleSheet("""
-            QFrame {
-                background-color: #DCDCDC;
-                border-radius: 10px;
-            }
-        """)
+        reg_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         reg_outer.setAttribute(Qt.WA_StyledBackground, True)
 
         reg_outer_layout = QVBoxLayout(reg_outer)
         reg_outer_layout.setContentsMargins(8, 8, 8, 8)
 
         reg_inner = QFrame(reg_outer)
-        reg_inner.setStyleSheet("""
-            QFrame {
-                background-color: #FFFFFF;
-                border-radius: 6px;
-            }
-        """)
+        reg_inner.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
         reg_inner.setAttribute(Qt.WA_StyledBackground, True)
 
         inner_layout = QVBoxLayout(reg_inner)
@@ -442,40 +468,18 @@ class CustomerView(QWidget):
         page_reg_layout.addStretch(1)
         self.right_stack.addWidget(page_reg)
 
-        # -------------------------------------------------------------
         # Page 1: 고객 정보 상세 / 방문 및 통계 화면
-        # -------------------------------------------------------------
         page_detail = QWidget()
         page_detail_layout = QVBoxLayout(page_detail)
         page_detail_layout.setContentsMargins(0, 0, 0, 0)
-        page_detail_layout.setSpacing(10)
+        page_detail_layout.setSpacing(8)
 
-        # 헤더 (+ 버튼 / 고객 정보 조회 타이틀)
-        detail_header = QHBoxLayout()
+        # 고객 정보 조회 타이틀
         lbl_detail_title = QLabel("고객 정보 조회", page_detail)
         lbl_detail_title.setFont(QFont("Inter", 20, QFont.Bold))
         lbl_detail_title.setStyleSheet("color: #000000; background: transparent;")
-
-        btn_plus = QPushButton("+", page_detail)
-        btn_plus.setFixedSize(36, 30)
-        btn_plus.setCursor(Qt.PointingHandCursor)
-        btn_plus.setFont(QFont("Inter", 16, QFont.Bold))
-        btn_plus.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Colors.PRIMARY};
-                color: #FFFFFF;
-                border: none;
-                border-radius: 6px;
-            }}
-            QPushButton:hover {{
-                background-color: {Colors.PRIMARY_HOVER};
-            }}
-        """)
-        btn_plus.clicked.connect(self.reset_form)
-
-        detail_header.addWidget(lbl_detail_title, 1, Qt.AlignCenter)
-        detail_header.addWidget(btn_plus, 0, Qt.AlignRight)
-        page_detail_layout.addLayout(detail_header)
+        lbl_detail_title.setAlignment(Qt.AlignCenter)
+        page_detail_layout.addWidget(lbl_detail_title)
 
         # 탭 버튼 그룹
         tab_button_layout = QHBoxLayout()
@@ -514,7 +518,6 @@ class CustomerView(QWidget):
         tab0_outer_layout.setContentsMargins(8, 8, 8, 8)
         tab0_outer_layout.setSpacing(8)
 
-        # 좌측 고객 기본 정보
         tab0_left_inner = QFrame(tab0_outer)
         tab0_left_inner.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
         tab0_left_inner.setAttribute(Qt.WA_StyledBackground, True)
@@ -582,7 +585,6 @@ class CustomerView(QWidget):
         left_info_layout.addStretch(1)
         tab0_outer_layout.addWidget(tab0_left_inner, 1)
 
-        # 우측 메모 박스
         tab0_right_inner = QFrame(tab0_outer)
         tab0_right_inner.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
         tab0_right_inner.setAttribute(Qt.WA_StyledBackground, True)
@@ -605,7 +607,6 @@ class CustomerView(QWidget):
         tab0_outer_layout.addWidget(tab0_right_inner, 1)
         tab0_layout.addWidget(tab0_outer, 1)
 
-        # 하단 수정 / 삭제 버튼 그룹
         btn_action_layout = QHBoxLayout()
         btn_action_layout.setSpacing(10)
 
@@ -655,71 +656,94 @@ class CustomerView(QWidget):
         tab1_layout.setContentsMargins(0, 0, 0, 0)
         tab1_layout.setSpacing(10)
 
-        self.visit_table = QTableWidget(tab1_widget)
+        table_v_container = QFrame(tab1_widget)
+        table_v_container.setStyleSheet("background-color: #FFFFFF; border-radius: 8px;")
+        table_v_container.setAttribute(Qt.WA_StyledBackground, True)
+        t_v_layout = QVBoxLayout(table_v_container)
+        t_v_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.visit_table = QTableWidget(table_v_container)
+        
+        v_custom_header = RoundedHeader(Qt.Horizontal, self.visit_table)
+        v_custom_header.setFixedHeight(36)
+        self.visit_table.setHorizontalHeader(v_custom_header)
+
         self.visit_table.setColumnCount(5)
         self.visit_table.setHorizontalHeaderLabels(["고객이름", "결제일", "결제금액", "시술", "시술자"])
-        self.visit_table.setFixedHeight(140)
+        self.visit_table.setFixedHeight(150)
+        
+        self.visit_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.visit_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.visit_table.verticalHeader().setVisible(False)
         self.visit_table.setShowGrid(False)
         self.visit_table.setFocusPolicy(Qt.NoFocus)
-        self.visit_table.setStyleSheet(f"""
-            QTableWidget {{
-                border: 1px solid #E0E0E0;
-                background-color: #FFFFFF;
-                border-radius: 6px;
-                font-size: 11px;
-                color: #000000;
-            }}
-            QHeaderView::section {{
-                background-color: {Colors.PRIMARY};
-                color: #FFFFFF;
-                font-weight: bold;
-                font-size: 11px;
+        self.visit_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.visit_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        self.visit_table.setMouseTracking(True)
+        self.visit_table.viewport().setMouseTracking(True)
+        self.visit_table.itemEntered.connect(self.on_visit_table_item_entered)
+
+        self.visit_table.setStyleSheet("""
+            QTableWidget {
                 border: none;
-                height: 28px;
-                text-align: center;
-            }}
-            QTableWidget::item {{
+                background-color: #FFFFFF;
+                border-radius: 8px;
+                font-size: 12px;
+                color: #000000;
+                outline: none;
+            }
+            QTableWidget::item {
                 border-bottom: 1px solid #E0E0E0;
-                padding: 4px;
-            }}
+                padding: 6px;
+            }
         """)
+        self.visit_table.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
+
         v_header = self.visit_table.horizontalHeader()
         v_header.setSectionResizeMode(QHeaderView.Stretch)
-        tab1_layout.addWidget(self.visit_table)
+        t_v_layout.addWidget(self.visit_table)
+        tab1_layout.addWidget(table_v_container)
 
+        # 하단 통계 영역
         stats_bottom_layout = QHBoxLayout()
-        stats_bottom_layout.setSpacing(10)
+        stats_bottom_layout.setSpacing(12)
 
         pref_card = QFrame(tab1_widget)
-        pref_card.setStyleSheet("background-color: #FFFFFF; border-radius: 6px; border: 1px solid #E0E0E0;")
+        pref_card.setStyleSheet("background-color: #FFFFFF; border-radius: 8px; border: 1px solid #DCDCDC;")
         pref_layout = QVBoxLayout(pref_card)
-        pref_layout.setContentsMargins(10, 10, 10, 10)
+        pref_layout.setContentsMargins(15, 12, 15, 12)
+        pref_layout.setSpacing(10)
         
-        lbl_pref_title = QLabel("시술 선호도 분석", pref_card)
-        lbl_pref_title.setFont(QFont("Inter", 11, QFont.Bold))
+        lbl_pref_title = QLabel("시술 선호도 분석\n", pref_card)
+        lbl_pref_title.setFont(QFont("Inter", 12, QFont.Bold))
+        lbl_pref_title.setStyleSheet("color: #000000; border: none; background: transparent;")
         pref_layout.addWidget(lbl_pref_title)
 
         self.pref_container = QVBoxLayout()
-        self.pref_container.setSpacing(6)
+        self.pref_container.setSpacing(10)
         pref_layout.addLayout(self.pref_container)
         pref_layout.addStretch(1)
 
         stats_bottom_layout.addWidget(pref_card, 1)
 
         summary_layout = QVBoxLayout()
-        summary_layout.setSpacing(6)
+        summary_layout.setSpacing(5)
 
         self.card_visits = self._create_stat_card("총 방문 횟수", "0회")
         self.card_total = self._create_stat_card("총 결제 금액", "0원")
         self.card_avg = self._create_stat_card("평균 결제 금액", "0원")
+        self.card_total_dur = self._create_stat_card("총 시술 시간", "0분")
+        self.card_avg_dur = self._create_stat_card("평균 시술 시간", "0분")
 
         summary_layout.addWidget(self.card_visits)
         summary_layout.addWidget(self.card_total)
         summary_layout.addWidget(self.card_avg)
+        summary_layout.addWidget(self.card_total_dur)
+        summary_layout.addWidget(self.card_avg_dur)
 
         stats_bottom_layout.addLayout(summary_layout, 1)
-        tab1_layout.addLayout(stats_bottom_layout)
+        tab1_layout.addLayout(stats_bottom_layout, 1)
 
         self.detail_tab_stack.addWidget(tab1_widget)
 
@@ -731,22 +755,28 @@ class CustomerView(QWidget):
 
         self.switch_detail_tab(0)
 
+    def on_visit_table_item_entered(self, item):
+        """방문 테이블 항목 호버 시 메뉴별 수량 툴팁 팝업 표시"""
+        if item and item.toolTip():
+            QToolTip.showText(QCursor.pos(), item.toolTip(), self.visit_table)
+
     def _create_stat_card(self, title: str, default_val: str) -> QFrame:
         card = QFrame(self)
-        card.setStyleSheet("background-color: #FFFFFF; border-radius: 6px; border: 1px solid #E0E0E0;")
+        card.setStyleSheet("background-color: #FFFFFF; border-radius: 8px; border: 1px solid #DCDCDC;")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(2)
+        layout.setContentsMargins(10, 5, 10, 5)
+        layout.setSpacing(1)
 
         lbl_t = QLabel(title, card)
-        lbl_t.setFont(QFont("Inter", 10, QFont.Bold))
-        lbl_t.setStyleSheet("color: #555555; border: none;")
+        lbl_t.setFont(QFont("Inter", 9, QFont.Bold))
+        lbl_t.setAlignment(Qt.AlignCenter)
+        lbl_t.setStyleSheet("color: #444444; border: none; background: transparent;")
 
         lbl_v = QLabel(default_val, card)
         lbl_v.setObjectName("val_label")
         lbl_v.setFont(QFont("Inter", 12, QFont.Bold))
         lbl_v.setAlignment(Qt.AlignCenter)
-        lbl_v.setStyleSheet("color: #000000; border: none;")
+        lbl_v.setStyleSheet("color: #000000; border: none; background: transparent;")
 
         layout.addWidget(lbl_t)
         layout.addWidget(lbl_v)
@@ -758,7 +788,6 @@ class CustomerView(QWidget):
             lbl.setText(val)
 
     def switch_detail_tab(self, index: int):
-        """상세정보 / 방문 및 통계 탭 전환"""
         self.detail_tab_stack.setCurrentIndex(index)
         if index == 0:
             self.btn_tab_info.setStyleSheet(f"""
@@ -791,30 +820,7 @@ class CustomerView(QWidget):
                 font-weight: bold;
             """)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.update_table_column_widths()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update_table_column_widths()
-
-    def update_table_column_widths(self):
-        """테이블 1.5 : 2.5 : 3 : 3 비율 지정"""
-        total_width = self.table.viewport().width()
-        if total_width > 0:
-            w0 = int(total_width * 0.15)
-            w1 = int(total_width * 0.25)
-            w2 = int(total_width * 0.30)
-            w3 = total_width - (w0 + w1 + w2)
-
-            self.table.setColumnWidth(0, w0)
-            self.table.setColumnWidth(1, w1)
-            self.table.setColumnWidth(2, w2)
-            self.table.setColumnWidth(3, w3)
-
     def format_phone_number(self, line_edit: QLineEdit, text: str):
-        """전화번호 입력 시 자동 하이픈(-) 포맷팅"""
         digits = "".join(filter(str.isdigit, text))
         if len(digits) > 11:
             digits = digits[:11]
@@ -842,12 +848,10 @@ class CustomerView(QWidget):
         line_edit.blockSignals(False)
 
     def load_customer_list(self):
-        """DB에서 활성 고객 목록을 조회하여 테이블에 로드"""
         self.all_customers = self.db_manager.get_all_customers()
         self.filter_customer_list()
 
     def filter_customer_list(self):
-        """검색어(이름/전화번호) 기반 실시간 필터링"""
         query = self.txt_search.text().strip().lower()
         self.table.setRowCount(0)
 
@@ -881,7 +885,6 @@ class CustomerView(QWidget):
             row_count += 1
 
     def on_table_selection_changed(self):
-        """테이블 행 선택 시 우측 영역을 '고객 정보 조회' 화면으로 전환 및 데이터 동기화"""
         selected_items = self.table.selectedItems()
         if not selected_items:
             return
@@ -905,10 +908,10 @@ class CustomerView(QWidget):
         self.txt_info_memo.setText(target_cust["memo"])
 
         self.right_stack.setCurrentIndex(1)
+        self.page_changed.emit(True)
         self.load_customer_stats(self.selected_customer_id)
 
     def reselect_customer(self, customer_id: int):
-        """목록 갱신 후 해당 고객 행 자동 재선택하여 우측 상세 뷰 갱신"""
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
             if item and int(item.data(Qt.UserRole)) == int(customer_id):
@@ -916,22 +919,64 @@ class CustomerView(QWidget):
                 break
 
     def load_customer_stats(self, customer_id: int):
-        """고객 방문 이력 및 선호도 통계 갱신"""
+        """선택된 고객의 방문 이력 및 5종 통계/선호도 갱신"""
+        def format_dur(dur_min: int) -> str:
+            if dur_min <= 0:
+                return "0분"
+            if dur_min >= 60:
+                h = dur_min // 60
+                m = dur_min % 60
+                return f"{h}시간" if m == 0 else f"{h}시간 {m}분"
+            return f"{dur_min}분"
+
+        # 1. 과거 시술 리스트 렌더링 (각 시술별 선택 수량 툴팁 구성)
         history = self.db_manager.get_customer_visit_history(customer_id)
         self.visit_table.setRowCount(0)
         for idx, item in enumerate(history):
             self.visit_table.insertRow(idx)
-            self.visit_table.setItem(idx, 0, QTableWidgetItem(item["customer_name"]))
-            self.visit_table.setItem(idx, 1, QTableWidgetItem(item["visit_date"]))
-            self.visit_table.setItem(idx, 2, QTableWidgetItem(item["amount"]))
-            self.visit_table.setItem(idx, 3, QTableWidgetItem(item["services"]))
-            self.visit_table.setItem(idx, 4, QTableWidgetItem(item["designer"]))
+            
+            details = item.get("service_details", [])
+            
+            if details:
+                detail_lines = [f"• {d['name']}: {d['count']}개" for d in details]
+                tooltip_info = f"[시술 항목별 선택 수량]\n" + "\n".join(detail_lines)
+            else:
+                tooltip_info = f"[시술 항목별 선택 수량]\n• 시술 내역 없음"
 
+            item_name = QTableWidgetItem(item["customer_name"])
+            item_name.setTextAlignment(Qt.AlignCenter)
+            item_name.setToolTip(tooltip_info)
+            self.visit_table.setItem(idx, 0, item_name)
+
+            item_date = QTableWidgetItem(item["visit_date"])
+            item_date.setTextAlignment(Qt.AlignCenter)
+            item_date.setToolTip(tooltip_info)
+            self.visit_table.setItem(idx, 1, item_date)
+
+            item_amt = QTableWidgetItem(item["amount"])
+            item_amt.setTextAlignment(Qt.AlignCenter)
+            item_amt.setToolTip(tooltip_info)
+            self.visit_table.setItem(idx, 2, item_amt)
+
+            item_svc = QTableWidgetItem(item["services"])
+            item_svc.setTextAlignment(Qt.AlignCenter)
+            item_svc.setToolTip(tooltip_info)
+            self.visit_table.setItem(idx, 3, item_svc)
+
+            item_des = QTableWidgetItem(item["designer"])
+            item_des.setTextAlignment(Qt.AlignCenter)
+            item_des.setToolTip(tooltip_info)
+            self.visit_table.setItem(idx, 4, item_des)
+
+        # 2. 통계 데이터 갱신
         stats = self.db_manager.get_customer_stats(customer_id)
         self.update_stat_card_val(self.card_visits, f"{stats['total_visits']}회")
         self.update_stat_card_val(self.card_total, f"{stats['total_amount']:,}원")
         self.update_stat_card_val(self.card_avg, f"{stats['avg_amount']:,}원")
+        self.update_stat_card_val(self.card_total_dur, format_dur(stats.get("total_duration", 0)))
+        self.update_stat_card_val(self.card_avg_dur, format_dur(stats.get("avg_duration", 0)))
 
+        # 3. 시술 선호도 차트 갱신
         while self.pref_container.count():
             item = self.pref_container.takeAt(0)
             if item.widget():
@@ -940,45 +985,30 @@ class CustomerView(QWidget):
         prefs = stats["preferences"]
         max_cnt = max([p["count"] for p in prefs], default=1) if prefs else 1
 
-        for p in prefs:
-            row_w = QWidget()
-            row_l = QHBoxLayout(row_w)
-            row_l.setContentsMargins(0, 0, 0, 0)
-            row_l.setSpacing(6)
+        for idx, p in enumerate(prefs):
+            cat_name = p["category"]
+            cnt = p["count"]
+            details = p.get("details", [])
 
-            lbl_cat = QLabel(p["category"], row_w)
-            lbl_cat.setFont(QFont("Inter", 9, QFont.Bold))
-            lbl_cat.setFixedWidth(40)
+            if details:
+                detail_str = "\n".join([f"• {d['service']}: {d['count']}회" for d in details])
+                tooltip_text = f"[{cat_name} 세부 시술 결제 내역]\n{detail_str}"
+            else:
+                tooltip_text = f"[{cat_name}] 총 {cnt}회 결제"
 
-            pbar = QProgressBar(row_w)
-            pbar.setFixedHeight(12)
-            pbar.setMaximum(max_cnt)
-            pbar.setValue(p["count"])
-            pbar.setTextVisible(False)
-            pbar.setStyleSheet(f"""
-                QProgressBar {{
-                    border: none;
-                    background-color: #EFEFEF;
-                    border-radius: 6px;
-                }}
-                QProgressBar::chunk {{
-                    background-color: {Colors.PRIMARY};
-                    border-radius: 6px;
-                }}
-            """)
-
-            lbl_cnt = QLabel(f"{p['count']}회", row_w)
-            lbl_cnt.setFont(QFont("Inter", 9))
-            lbl_cnt.setFixedWidth(30)
-
-            row_l.addWidget(lbl_cat)
-            row_l.addWidget(pbar, 1)
-            row_l.addWidget(lbl_cnt)
-
-            self.pref_container.addWidget(row_w)
+            bar_color = self.CATEGORY_COLORS.get(cat_name, self.DEFAULT_COLORS[idx % len(self.DEFAULT_COLORS)])
+            
+            row_widget = PreferenceBarRow(
+                cat_name=cat_name,
+                cnt=cnt,
+                max_cnt=max_cnt,
+                bar_color=bar_color,
+                tooltip_text=tooltip_text,
+                parent=self
+            )
+            self.pref_container.addWidget(row_widget)
 
     def reset_form(self):
-        """신규 고객 등록 모드로 전환"""
         self.selected_customer_id = None
         self.table.clearSelection()
 
@@ -987,9 +1017,9 @@ class CustomerView(QWidget):
         self.txt_reg_memo.clear()
 
         self.right_stack.setCurrentIndex(0)
+        self.page_changed.emit(False)
 
     def save_new_customer(self):
-        """신규 고객 등록 처리"""
         name = self.txt_reg_name.text().strip()
         phone = self.txt_reg_phone.text().strip()
         memo = self.txt_reg_memo.text().strip()
@@ -1013,7 +1043,6 @@ class CustomerView(QWidget):
             QMessageBox.warning(self, "등록 실패", err_msg)
 
     def update_customer_info(self):
-        """고객 정보 수정 처리 (수정 후 재선택을 통해 데이터 동기화)"""
         if self.selected_customer_id is None:
             QMessageBox.warning(self, "선택 오류", "수정할 고객을 먼저 목록에서 선택해 주세요.")
             return
@@ -1042,7 +1071,6 @@ class CustomerView(QWidget):
             QMessageBox.warning(self, "수정 실패", err_msg)
 
     def delete_customer_info(self):
-        """커스텀 팝업을 통한 고객 논리적 삭제 처리"""
         if self.selected_customer_id is None:
             return
 

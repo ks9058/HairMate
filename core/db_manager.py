@@ -404,7 +404,7 @@ class DBManager:
             
             visit_id = cursor.lastrowid
 
-            # 2. visit_service 상세 저장
+            # 2. visit_service 상세 저장 (quantity 컬럼에 item["qty"] 저장)
             for item in cart_items:
                 cursor.execute("""
                     INSERT INTO visit_service (visit_id, service_id, user_id, price, quantity)
@@ -448,34 +448,61 @@ class DBManager:
             conn.close()
 
     def get_customer_visit_history(self, customer_id: int):
-        """특정 고객 방문 이력 조회"""
+        """특정 고객 방문 이력 및 시술 항목별 선택 수량 조회 (SUM으로 수량 합산)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute("""
                 SELECT 
+                    v.id,
                     c.name AS customer_name,
                     strftime('%Y-%m-%d', v.visited_at) AS visit_date,
                     v.total_amount,
-                    COALESCE(GROUP_CONCAT(DISTINCT s.name), '-') AS services,
                     COALESCE(u.name, '-') AS designer_name
                 FROM visit v
                 JOIN customer c ON v.customer_id = c.id
-                LEFT JOIN visit_service vs ON v.id = vs.visit_id
-                LEFT JOIN service s ON vs.service_id = s.id
                 LEFT JOIN user u ON v.user_id = u.id
                 WHERE v.customer_id = ?
-                GROUP BY v.id
-                ORDER BY v.visited_at DESC
+                ORDER BY v.visited_at DESC, v.id DESC
             """, (int(customer_id),))
             rows = cursor.fetchall()
-            return [{
-                "customer_name": r[0],
-                "visit_date": r[1],
-                "amount": f"{r[2]:,}원",
-                "services": r[3],
-                "designer": r[4]
-            } for r in rows]
+
+            history = []
+            for v_id, c_name, v_date, total_amt, d_name in rows:
+                cursor.execute("""
+                    SELECT s.name, SUM(COALESCE(vs.quantity, 1)) AS cnt
+                    FROM visit_service vs
+                    JOIN service s ON vs.service_id = s.id
+                    WHERE vs.visit_id = ?
+                    GROUP BY s.id
+                    ORDER BY cnt DESC, s.name ASC
+                """, (v_id,))
+                svc_rows = cursor.fetchall()
+
+                if svc_rows:
+                    svc_list_str = []
+                    details_list = []
+                    for name, cnt in svc_rows:
+                        details_list.append({"name": name, "count": cnt})
+                        if cnt > 1:
+                            svc_list_str.append(f"{name} ({cnt}개)")
+                        else:
+                            svc_list_str.append(name)
+                    services_str = ", ".join(svc_list_str)
+                else:
+                    services_str = "-"
+                    details_list = []
+
+                history.append({
+                    "visit_id": v_id,
+                    "customer_name": c_name,
+                    "visit_date": v_date,
+                    "amount": f"{total_amt:,}",
+                    "services": services_str,
+                    "designer": d_name,
+                    "service_details": details_list
+                })
+            return history
         except Exception as e:
             print(f"[DB Error] get_customer_visit_history: {e}")
             return []
@@ -483,157 +510,206 @@ class DBManager:
             conn.close()
 
     def get_customer_stats(self, customer_id: int):
-        """특정 고객 방문 통계 데이터 조회"""
+        """특정 고객 방문 통계 데이터 (방문 횟수, 총/평균 금액, 총/평균 시술시간, 시술 선호도 및 세부 시술 내역) 조회"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             c_id = int(customer_id)
             cursor.execute("""
                 SELECT 
-                    COUNT(id) AS visit_count,
-                    COALESCE(SUM(total_amount), 0) AS total_amt,
-                    COALESCE(AVG(total_amount), 0) AS avg_amt
-                FROM visit
-                WHERE customer_id = ?
+                    COUNT(v.id) AS visit_count,
+                    COALESCE(SUM(v.total_amount), 0) AS total_amt,
+                    COALESCE(AVG(v.total_amount), 0) AS avg_amt,
+                    COALESCE(SUM(
+                        CASE 
+                            WHEN v.total_duration_minutes > 0 THEN v.total_duration_minutes
+                            ELSE (SELECT COALESCE(SUM(s.duration_minutes), 0) 
+                                FROM visit_service vs2 
+                                JOIN service s ON vs2.service_id = s.id 
+                                WHERE vs2.visit_id = v.id)
+                        END
+                    ), 0) AS total_dur,
+                    COALESCE(AVG(
+                        CASE 
+                            WHEN v.total_duration_minutes > 0 THEN v.total_duration_minutes
+                            ELSE (SELECT COALESCE(SUM(s.duration_minutes), 0) 
+                                FROM visit_service vs2 
+                                JOIN service s ON vs2.service_id = s.id 
+                                WHERE vs2.visit_id = v.id)
+                        END
+                    ), 0) AS avg_dur
+                FROM visit v
+                WHERE v.customer_id = ?
             """, (c_id,))
             stat = cursor.fetchone()
             
             visit_count = stat[0] if stat else 0
             total_amt = stat[1] if stat else 0
             avg_amt = int(stat[2]) if stat else 0
+            total_dur = int(stat[3]) if stat else 0
+            avg_dur = int(stat[4]) if stat else 0
 
+            # 카테고리별 시술 선호도 및 세부 시술별 결제 수량 집계
             cursor.execute("""
-                SELECT cat.name, COUNT(vs.id)
+                SELECT cat.id, cat.name, SUM(COALESCE(vs.quantity, 1))
                 FROM visit_service vs
                 JOIN visit v ON vs.visit_id = v.id
                 JOIN service s ON vs.service_id = s.id
                 JOIN category cat ON s.category_id = cat.id
                 WHERE v.customer_id = ?
                 GROUP BY cat.id
-                ORDER BY COUNT(vs.id) DESC
+                ORDER BY SUM(COALESCE(vs.quantity, 1)) DESC, cat.id ASC
             """, (c_id,))
             pref_rows = cursor.fetchall()
-            preferences = [{"category": r[0], "count": r[1]} for r in pref_rows]
+
+            preferences = []
+            for cat_id, cat_name, total_cnt in pref_rows:
+                cursor.execute("""
+                    SELECT s.name, SUM(COALESCE(vs.quantity, 1))
+                    FROM visit_service vs
+                    JOIN visit v ON vs.visit_id = v.id
+                    JOIN service s ON vs.service_id = s.id
+                    WHERE v.customer_id = ? AND s.category_id = ?
+                    GROUP BY s.id
+                    ORDER BY SUM(COALESCE(vs.quantity, 1)) DESC, s.name ASC
+                """, (c_id, cat_id))
+                detail_rows = cursor.fetchall()
+                details = [{"service": r[0], "count": r[1]} for r in detail_rows]
+
+                preferences.append({
+                    "category": cat_name,
+                    "count": total_cnt,
+                    "details": details
+                })
 
             return {
                 "total_visits": visit_count,
                 "total_amount": total_amt,
                 "avg_amount": avg_amt,
+                "total_duration": total_dur,
+                "avg_duration": avg_dur,
                 "preferences": preferences
             }
         except Exception as e:
             print(f"[DB Error] get_customer_stats: {e}")
-            return {"total_visits": 0, "total_amount": 0, "avg_amount": 0, "preferences": []}
+            return {
+                "total_visits": 0, "total_amount": 0, "avg_amount": 0,
+                "total_duration": 0, "avg_duration": 0, "preferences": []
+            }
         finally:
             conn.close()
-
+            
     # -------------------------------------------------------------
     # Sales Cancel (결제 취소) 헬퍼
     # -------------------------------------------------------------
     def get_sales_cancel_list(self, query: str = "", date_str: str = ""):
-            """결제 취소 화면용 목록 조회 (최신순 정렬, 결제 시/분 시간 포함 조회)"""
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            try:
-                sql = """
-                    SELECT 
-                        v.id AS visit_id,
-                        c.id AS customer_id,
-                        c.name AS customer_name,
-                        c.phone AS customer_phone,
-                        COALESCE((
-                            SELECT GROUP_CONCAT(s.name, '|||') 
-                            FROM visit_service vs 
-                            JOIN service s ON vs.service_id = s.id 
-                            WHERE vs.visit_id = v.id
-                        ), '-') AS services_raw,
-                        COALESCE((
-                            SELECT GROUP_CONCAT(DISTINCT payment_method) 
-                            FROM payment 
-                            WHERE visit_id = v.id
-                        ), '-') AS payment_methods,
-                        v.total_amount,
-                        strftime('%Y-%m-%d %H:%M', v.visited_at) AS visit_date,
-                        COALESCE((
-                            SELECT SUM(amount) 
-                            FROM point_history 
-                            WHERE visit_id = v.id AND type = 'EARN'
-                        ), 0) AS earned_point,
-                        COALESCE((
-                            SELECT SUM(ABS(amount)) 
-                            FROM point_history 
-                            WHERE visit_id = v.id AND type = 'USE'
-                        ), 0) AS used_point,
-                        v.total_duration_minutes,
-                        COALESCE(u.name, '-') AS designer_name,
-                        COALESCE(u.position, '') AS designer_position
-                    FROM visit v
-                    JOIN customer c ON v.customer_id = c.id
-                    LEFT JOIN user u ON v.user_id = u.id
-                    WHERE 1=1
-                """
-                params = []
+        """결제 취소 화면용 목록 조회 (최신순 정렬, 수량 2개 이상일 경우 표시)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            sql = """
+                SELECT 
+                    v.id AS visit_id,
+                    c.id AS customer_id,
+                    c.name AS customer_name,
+                    c.phone AS customer_phone,
+                    COALESCE((
+                        SELECT GROUP_CONCAT(
+                            CASE 
+                                WHEN COALESCE(vs.quantity, 1) > 1 THEN s.name || ' (' || vs.quantity || '개)'
+                                ELSE s.name 
+                            END, '|||') 
+                        FROM visit_service vs 
+                        JOIN service s ON vs.service_id = s.id 
+                        WHERE vs.visit_id = v.id
+                    ), '-') AS services_raw,
+                    COALESCE((
+                        SELECT GROUP_CONCAT(DISTINCT payment_method) 
+                        FROM payment 
+                        WHERE visit_id = v.id
+                    ), '-') AS payment_methods,
+                    v.total_amount,
+                    strftime('%Y-%m-%d %H:%M', v.visited_at) AS visit_date,
+                    COALESCE((
+                        SELECT SUM(amount) 
+                        FROM point_history 
+                        WHERE visit_id = v.id AND type = 'EARN'
+                    ), 0) AS earned_point,
+                    COALESCE((
+                        SELECT SUM(ABS(amount)) 
+                        FROM point_history 
+                        WHERE visit_id = v.id AND type = 'USE'
+                    ), 0) AS used_point,
+                    v.total_duration_minutes,
+                    COALESCE(u.name, '-') AS designer_name,
+                    COALESCE(u.position, '') AS designer_position
+                FROM visit v
+                JOIN customer c ON v.customer_id = c.id
+                LEFT JOIN user u ON v.user_id = u.id
+                WHERE 1=1
+            """
+            params = []
 
-                if query:
-                    sql += " AND (c.name LIKE ? OR c.phone LIKE ?)"
-                    q_param = f"%{query}%"
-                    params.extend([q_param, q_param])
+            if query:
+                sql += " AND (c.name LIKE ? OR c.phone LIKE ?)"
+                q_param = f"%{query}%"
+                params.extend([q_param, q_param])
 
-                if date_str:
-                    sql += " AND strftime('%Y-%m-%d', v.visited_at) = ?"
-                    params.append(date_str)
+            if date_str:
+                sql += " AND strftime('%Y-%m-%d', v.visited_at) = ?"
+                params.append(date_str)
 
-                sql += " ORDER BY v.visited_at DESC, v.id DESC"
+            sql += " ORDER BY v.visited_at DESC, v.id DESC"
 
-                cursor.execute(sql, params)
-                rows = cursor.fetchall()
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
 
-                result = []
-                for r in rows:
-                    raw_services = r[4]
-                    if raw_services and raw_services != '-':
-                        svc_list = list(dict.fromkeys([s.strip() for s in raw_services.split('|||') if s.strip()]))
-                        display_services = ", ".join(svc_list)
-                    else:
-                        svc_list = []
-                        display_services = "-"
+            result = []
+            for r in rows:
+                raw_services = r[4]
+                if raw_services and raw_services != '-':
+                    svc_list = [s.strip() for s in raw_services.split('|||') if s.strip()]
+                    display_services = ", ".join(svc_list)
+                else:
+                    svc_list = []
+                    display_services = "-"
 
-                    dur_min = r[10] or 0
-                    if dur_min >= 60:
-                        h = dur_min // 60
-                        m = dur_min % 60
-                        dur_str = f"{h}시간" if m == 0 else f"{h}시간 {m}분"
-                    else:
-                        dur_str = f"{dur_min}분"
+                dur_min = r[10] or 0
+                if dur_min >= 60:
+                    h = dur_min // 60
+                    m = dur_min % 60
+                    dur_str = f"{h}시간" if m == 0 else f"{h}시간 {m}분"
+                else:
+                    dur_str = f"{dur_min}분"
 
-                    d_name = r[11]
-                    d_pos = r[12]
-                    if d_name != '-' and d_pos:
-                        designer_str = f"{d_name} ({d_pos})"
-                    else:
-                        designer_str = d_name
+                d_name = r[11]
+                d_pos = r[12]
+                if d_name != '-' and d_pos:
+                    designer_str = f"{d_name} ({d_pos})"
+                else:
+                    designer_str = d_name
 
-                    result.append({
-                        "visit_id": r[0],
-                        "customer_id": r[1],
-                        "customer_name": r[2],
-                        "customer_phone": r[3],
-                        "services": display_services,
-                        "services_list": svc_list,
-                        "payment_method": r[5],
-                        "total_amount": r[6],
-                        "visit_date": r[7], # 'YYYY-MM-DD HH:MM' 형태로 전달됨
-                        "earned_point": r[8],
-                        "used_point": r[9],
-                        "duration_str": dur_str,
-                        "designer_info": designer_str
-                    })
-                return result
-            except Exception as e:
-                print(f"[DB Error] get_sales_cancel_list: {e}")
-                return []
-            finally:
-                conn.close()
+                result.append({
+                    "visit_id": r[0],
+                    "customer_id": r[1],
+                    "customer_name": r[2],
+                    "customer_phone": r[3],
+                    "services": display_services,
+                    "services_list": svc_list,
+                    "payment_method": r[5],
+                    "total_amount": r[6],
+                    "visit_date": r[7],
+                    "earned_point": r[8],
+                    "used_point": r[9],
+                    "duration_str": dur_str,
+                    "designer_info": designer_str
+                })
+            return result
+        except Exception as e:
+            print(f"[DB Error] get_sales_cancel_list: {e}")
+            return []
+        finally:
+            conn.close()
 
     def cancel_sale_transaction(self, visit_id: int) -> tuple[bool, str]:
         """결제 취소 트랜잭션: 포인트 원상복구(적립 차감 & 사용 복원) 후 visit/payment/visit_service 삭제"""
@@ -717,80 +793,76 @@ class DBManager:
         return categories_data, services_map
     
     def save_all_changes(self, categories_data, services_map):
-            """카테고리 및 시술 정보 변경 사항 저장 (SQL 파라미터 바인딩 오류 수정 완료)"""
-            conn = self.get_connection()
-            cursor = conn.cursor()
+        """카테고리 및 시술 정보 변경 사항 저장"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
 
-            try:
-                cursor.execute("BEGIN TRANSACTION;")
+        try:
+            cursor.execute("BEGIN TRANSACTION;")
 
-                # 1. 카테고리 저장 및 수정
-                for idx, cat in enumerate(categories_data):
-                    cat_id = cat.get("id")
-                    name = cat["name"]
-                    
-                    if name == "선결제" or cat.get("is_system") == 1:
-                        is_active = 1
-                    else:
-                        is_active = 0 if cat.get("deleted", False) else 1
-
-                    display_order = idx
-
-                    if cat_id is None:
-                        # 물음표 4개 <-> 변수 4개
-                        cursor.execute("""
-                            INSERT INTO category (name, display_order, is_active, is_system)
-                            VALUES (?, ?, ?, ?)
-                        """, (name, display_order, is_active, 1 if name == "선결제" else 0))
-                        cat["id"] = cursor.lastrowid
-                    else:
-                        # 물음표 4개 <-> 변수 4개
-                        cursor.execute("""
-                            UPDATE category
-                            SET name = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                        """, (name, display_order, is_active, cat_id))
-
-                # 2. 시술 메뉴 저장 및 수정
-                for cat in categories_data:
-                    cat_id = cat.get("id")
-                    cat_name = cat["name"]
-                    services = services_map.get(cat_name, [])
-                    cat_deleted = cat.get("deleted", False) and cat_name != "선결제"
-
-                    for s_idx, svc in enumerate(services):
-                        svc_id = svc.get("id")
-                        svc_name = svc["name"]
-                        price = svc["price"]
-                        display_order = s_idx
-                        
-                        is_active = 0 if (svc.get("deleted", False) or cat_deleted) else 1
-
-                        if svc_id is None:
-                            # 신규 추가: 물음표 5개 <-> 변수 5개 (cat_id, svc_name, price, display_order, is_active)
-                            cursor.execute("""
-                                INSERT INTO service (category_id, name, price, display_order, is_active)
-                                VALUES (?, ?, ?, ?, ?)
-                            """, (cat_id, svc_name, price, display_order, is_active))
-                            svc["id"] = cursor.lastrowid
-                        else:
-                            # 기존 수정: 물음표 6개 <-> 변수 6개 (cat_id, svc_name, price, display_order, is_active, svc_id)
-                            cursor.execute("""
-                                UPDATE service
-                                SET category_id = ?, name = ?, price = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
-                                WHERE id = ?
-                            """, (cat_id, svc_name, price, display_order, is_active, svc_id))
-
-                conn.commit()
-                return True, "변경 사항이 성공적으로 저장되었습니다."
-
-            except Exception as e:
-                conn.rollback()
-                print(f"[DB Error] save_all_changes: {e}")
-                return False, f"저장 중 오류가 발생했습니다: {str(e)}"
+            # 1. 카테고리 저장 및 수정
+            for idx, cat in enumerate(categories_data):
+                cat_id = cat.get("id")
+                name = cat["name"]
                 
-            finally:
-                conn.close()
+                if name == "선결제" or cat.get("is_system") == 1:
+                    is_active = 1
+                else:
+                    is_active = 0 if cat.get("deleted", False) else 1
+
+                display_order = idx
+
+                if cat_id is None:
+                    cursor.execute("""
+                        INSERT INTO category (name, display_order, is_active, is_system)
+                        VALUES (?, ?, ?, ?)
+                    """, (name, display_order, is_active, 1 if name == "선결제" else 0))
+                    cat["id"] = cursor.lastrowid
+                else:
+                    cursor.execute("""
+                        UPDATE category
+                        SET name = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    """, (name, display_order, is_active, cat_id))
+
+            # 2. 시술 메뉴 저장 및 수정
+            for cat in categories_data:
+                cat_id = cat.get("id")
+                cat_name = cat["name"]
+                services = services_map.get(cat_name, [])
+                cat_deleted = cat.get("deleted", False) and cat_name != "선결제"
+
+                for s_idx, svc in enumerate(services):
+                    svc_id = svc.get("id")
+                    svc_name = svc["name"]
+                    price = svc["price"]
+                    display_order = s_idx
+                    
+                    is_active = 0 if (svc.get("deleted", False) or cat_deleted) else 1
+
+                    if svc_id is None:
+                        cursor.execute("""
+                            INSERT INTO service (category_id, name, price, display_order, is_active)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (cat_id, svc_name, price, display_order, is_active))
+                        svc["id"] = cursor.lastrowid
+                    else:
+                        cursor.execute("""
+                            UPDATE service
+                            SET category_id = ?, name = ?, price = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        """, (cat_id, svc_name, price, display_order, is_active, svc_id))
+
+            conn.commit()
+            return True, "변경 사항이 성공적으로 저장되었습니다."
+
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] save_all_changes: {e}")
+            return False, f"저장 중 오류가 발생했습니다: {str(e)}"
+            
+        finally:
+            conn.close()
 
     # -------------------------------------------------------------
     # User / Designer CRUD 헬퍼
