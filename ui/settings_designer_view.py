@@ -1,39 +1,163 @@
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
-    QFrame, QMessageBox, QAbstractItemView, QDialog
+    QFrame, QAbstractItemView, QDialog
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QTextDocument
 from ui.theme import Colors, Styles, get_icon
 from core.db_manager import DBManager
 
 
+class CustomAlertDialog(QDialog):
+    """시스템 기본 QMessageBox를 대체하는 모던 커스텀 안내/알림 팝업"""
+
+    def __init__(self, title: str, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setMinimumWidth(460)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(35, 30, 35, 25)
+        c_layout.setSpacing(22)
+
+        formatted_msg = message.replace("\n", "<br>")
+        lbl_msg = QLabel(f"<div style='line-height: 150%; text-align: center;'>{formatted_msg}</div>", container)
+        lbl_msg.setFont(QFont("Inter", 13, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000;")
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setAlignment(Qt.AlignCenter)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedSize(130, 42)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+
+        btn_layout.addWidget(btn_confirm)
+
+        c_layout.addWidget(lbl_msg)
+        c_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
+
+
+class RoundedHeader(QHeaderView):
+    """상단 양쪽 모서리 라운드 적용 및 세로 구분선 제거 커스텀 헤더 뷰"""
+
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self.setDefaultAlignment(Qt.AlignCenter)
+
+    def paintSection(self, painter, rect, logicalIndex):
+        painter.save()
+
+        r = 8.0
+        x, y, w, h = float(rect.x()), float(rect.y()), float(rect.width()), float(rect.height())
+        count = self.count()
+
+        path = QPainterPath()
+        if count == 1:
+            path.moveTo(x + r, y)
+            path.lineTo(x + w - r, y)
+            path.quadTo(x + w, y, x + w, y + r)
+            path.lineTo(x + w, y + h)
+            path.lineTo(x, y + h)
+            path.lineTo(x, y + r)
+            path.quadTo(x, y, x + r, y)
+        elif logicalIndex == 0:
+            path.moveTo(x + r, y)
+            path.lineTo(x + w, y)
+            path.lineTo(x + w, y + h)
+            path.lineTo(x, y + h)
+            path.lineTo(x, y + r)
+            path.quadTo(x, y, x + r, y)
+        elif logicalIndex == count - 1:
+            path.moveTo(x, y)
+            path.lineTo(x + w - r, y)
+            path.quadTo(x + w, y, x + w, y + r)
+            path.lineTo(x + w, y + h)
+            path.lineTo(x, y + h)
+            path.closeSubpath()
+        else:
+            path.addRect(rect)
+
+        painter.fillPath(path, QColor(Colors.PRIMARY))
+
+        text = self.model().headerData(logicalIndex, self.orientation(), Qt.DisplayRole)
+        if text:
+            doc = QTextDocument()
+            doc.setHtml(f"<div style='color: #FFFFFF; font-weight: bold; font-size: 13px; text-align: center;'>{text}</div>")
+            doc.setTextWidth(rect.width())
+
+            y_offset = (rect.height() - doc.size().height()) / 2
+            painter.translate(rect.x(), rect.y() + y_offset)
+            doc.drawContents(painter)
+
+        painter.restore()
+
+
 class ConfirmDeleteDialog(QDialog):
-    """와이어프레임 디자인 스펙과 1:1 매칭되는 커스텀 삭제 확인 팝업"""
+    """프레임리스 테마 적용 커스텀 삭제 확인 팝업"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("직원 삭제 확인")
-        self.setFixedSize(380, 180)
-        self.setStyleSheet("background-color: #FFFFFF;")
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(480, 200)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 30, 30, 25)
-        layout.setSpacing(25)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
 
-        lbl_msg = QLabel("해당 직원을 정말로 <span style='color:#E53E3E; font-weight:bold;'>삭제</span> 하시겠습니까?", self)
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(30, 30, 30, 25)
+        c_layout.setSpacing(24)
+
+        lbl_msg = QLabel("해당 직원을 정말로 <span style='color:#E53E3E; font-weight:bold;'>삭제</span> 하시겠습니까?", container)
         lbl_msg.setFont(QFont("Inter", 14, QFont.Bold))
         lbl_msg.setAlignment(Qt.AlignCenter)
-        lbl_msg.setStyleSheet("color: #000000; background: transparent;")
-        layout.addWidget(lbl_msg)
+        lbl_msg.setStyleSheet("color: #000000; background: transparent; border: none;")
+        c_layout.addWidget(lbl_msg)
 
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(15)
+        btn_layout.setSpacing(14)
+        btn_layout.setAlignment(Qt.AlignCenter)
 
-        btn_confirm = QPushButton("확인", self)
-        btn_confirm.setFixedHeight(42)
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedSize(130, 42)
         btn_confirm.setCursor(Qt.PointingHandCursor)
         btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
         btn_confirm.setStyleSheet(f"""
@@ -49,8 +173,8 @@ class ConfirmDeleteDialog(QDialog):
         """)
         btn_confirm.clicked.connect(self.accept)
 
-        btn_cancel = QPushButton("취소", self)
-        btn_cancel.setFixedHeight(42)
+        btn_cancel = QPushButton("취소", container)
+        btn_cancel.setFixedSize(130, 42)
         btn_cancel.setCursor(Qt.PointingHandCursor)
         btn_cancel.setFont(QFont("Inter", 12, QFont.Bold))
         btn_cancel.setStyleSheet(f"""
@@ -69,11 +193,12 @@ class ConfirmDeleteDialog(QDialog):
         btn_layout.addWidget(btn_confirm)
         btn_layout.addWidget(btn_cancel)
 
-        layout.addLayout(btn_layout)
+        c_layout.addLayout(btn_layout)
+        outer_layout.addWidget(container)
 
 
 class SettingsDesignerView(QWidget):
-    """설정 > 디자이너/직원 관리 뷰 (사용자 너비 조절 고정 및 1.5:2.5:3:3 비율 반영)"""
+    """설정 > 디자이너/직원 관리 뷰"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -155,6 +280,11 @@ class SettingsDesignerView(QWidget):
         table_layout.setContentsMargins(0, 0, 0, 0)
 
         self.table = QTableWidget(table_container)
+        
+        custom_header = RoundedHeader(Qt.Horizontal, self.table)
+        custom_header.setFixedHeight(40)
+        self.table.setHorizontalHeader(custom_header)
+
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["번호", "이름", "전화번호", "직급"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -175,28 +305,10 @@ class SettingsDesignerView(QWidget):
                 color: #000000;
                 outline: none;
             }}
-            QHeaderView {{
-                background-color: transparent;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-            }}
-            QHeaderView::section {{
-                background-color: {Colors.PRIMARY};
-                color: #FFFFFF;
-                font-weight: bold;
-                font-size: 13px;
-                border: none;
-                height: 40px;
-                text-align: center;
-            }}
-            QHeaderView::section:first {{
-                border-top-left-radius: 6px;
-            }}
-            QHeaderView::section:last {{
-                border-top-right-radius: 6px;
-            }}
             QTableWidget::item {{
                 border-bottom: 1px solid #E0E0E0;
+                border-left: none;
+                border-right: none;
                 padding: 8px;
                 outline: none;
             }}
@@ -211,7 +323,6 @@ class SettingsDesignerView(QWidget):
                 outline: none;
             }}
             
-            /* 세로 커스텀 스크롤바 */
             QScrollBar:vertical {{
                 border: none;
                 background: #F2F2F2;
@@ -237,7 +348,6 @@ class SettingsDesignerView(QWidget):
             }}
         """)
 
-        # 사용자가 마우스로 헤더 경계면을 늘리거나 줄이지 못하도록 Fixed 고정
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Fixed)
 
@@ -463,10 +573,10 @@ class SettingsDesignerView(QWidget):
         """테이블 전체 너비를 기준 비율 1.5 : 2.5 : 3 : 3 (15%, 25%, 30%, 30%)으로 강제 지정"""
         total_width = self.table.viewport().width()
         if total_width > 0:
-            w0 = int(total_width * 0.15)  # 번호 (15%)
-            w1 = int(total_width * 0.25)  # 이름 (25%)
-            w2 = int(total_width * 0.30)  # 전화번호 (30%)
-            w3 = total_width - (w0 + w1 + w2)  # 직급 (30% + 잔여 픽셀 처리)
+            w0 = int(total_width * 0.15)
+            w1 = int(total_width * 0.25)
+            w2 = int(total_width * 0.30)
+            w3 = total_width - (w0 + w1 + w2)
 
             self.table.setColumnWidth(0, w0)
             self.table.setColumnWidth(1, w1)
@@ -583,36 +693,36 @@ class SettingsDesignerView(QWidget):
         position = self.txt_position.text().strip()
 
         if not name:
-            QMessageBox.warning(self, "입력 오류", "이름을 입력해 주세요.")
+            CustomAlertDialog("입력 오류", "이름을 입력해 주세요.", self).exec()
             self.txt_name.setFocus()
             return
 
         if not phone:
-            QMessageBox.warning(self, "입력 오류", "전화번호를 입력해 주세요.")
+            CustomAlertDialog("입력 오류", "전화번호를 입력해 주세요.", self).exec()
             self.txt_phone.setFocus()
             return
 
         if not position:
-            QMessageBox.warning(self, "입력 오류", "직급을 입력해 주세요.")
+            CustomAlertDialog("입력 오류", "직급을 입력해 주세요.", self).exec()
             self.txt_position.setFocus()
             return
 
         if self.selected_user_id is None:
             success, err_msg = self.db_manager.add_designer(name, phone, position)
             if success:
-                QMessageBox.information(self, "등록 완료", f"'{name}' 직원이 성공적으로 등록되었습니다.")
+                CustomAlertDialog("등록 완료", f"'{name}' 직원이 성공적으로 등록되었습니다.", self).exec()
                 self.load_designer_list()
                 self.reset_form()
             else:
-                QMessageBox.critical(self, "오류", f"직원 등록 중 오류가 발생했습니다.\n\n[상세 내용]: {err_msg}")
+                CustomAlertDialog("오류", f"직원 등록 중 오류가 발생했습니다.\n\n[상세 내용]: {err_msg}", self).exec()
         else:
             success, err_msg = self.db_manager.update_designer(self.selected_user_id, name, phone, position)
             if success:
-                QMessageBox.information(self, "수정 완료", f"'{name}' 직원의 정보가 수정되었습니다.")
+                CustomAlertDialog("수정 완료", f"'{name}' 직원의 정보가 수정되었습니다.", self).exec()
                 self.load_designer_list()
                 self.reset_form()
             else:
-                QMessageBox.critical(self, "오류", f"직원 정보 수정 중 오류가 발생했습니다.\n\n[상세 내용]: {err_msg}")
+                CustomAlertDialog("오류", f"직원 정보 수정 중 오류가 발생했습니다.\n\n[상세 내용]: {err_msg}", self).exec()
 
     def delete_designer(self):
         """커스텀 팝업 창을 통한 직원 논리적 삭제 처리"""
@@ -622,8 +732,8 @@ class SettingsDesignerView(QWidget):
         dialog = ConfirmDeleteDialog(self)
         if dialog.exec() == QDialog.Accepted:
             if self.db_manager.delete_designer(self.selected_user_id):
-                QMessageBox.information(self, "삭제 완료", f"'{self.txt_name.text().strip()}' 직원이 삭제되었습니다.")
+                CustomAlertDialog("삭제 완료", f"'{self.txt_name.text().strip()}' 직원이 삭제되었습니다.", self).exec()
                 self.load_designer_list()
                 self.reset_form()
             else:
-                QMessageBox.critical(self, "오류", "직원 삭제 처리 중 오류가 발생했습니다.")
+                CustomAlertDialog("오류", "직원 삭제 처리 중 오류가 발생했습니다.", self).exec()

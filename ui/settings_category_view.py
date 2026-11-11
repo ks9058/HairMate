@@ -1,10 +1,10 @@
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QFrame, QMenu, QMessageBox, QDialog, QLineEdit, QSpinBox,
+    QFrame, QMenu, QDialog, QLineEdit, QSpinBox,
     QScrollArea, QGridLayout, QApplication
 )
-from PySide6.QtCore import Qt, Signal, QMimeData, QPoint
+from PySide6.QtCore import Qt, Signal, QMimeData, QPoint, QTimer
 from PySide6.QtGui import QFont, QWheelEvent, QDrag, QPixmap, QPainter, QPainterPath
 from ui.theme import Colors, Styles
 from core.db_manager import DBManager
@@ -84,32 +84,101 @@ class VerticalScrollArea(QScrollArea):
 
 
 # -------------------------------------------------------------
-# 2. 커스텀 다이얼로그 (수정/추가 팝업)
+# 2. 커스텀 모달 다이얼로그 (안내 / 입력 / 수정 팝업)
 # -------------------------------------------------------------
+class CustomAlertDialog(QDialog):
+    """시스템 기본 QMessageBox를 대체하는 테마 커스텀 안내/알림 팝업"""
+
+    def __init__(self, title: str, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setMinimumWidth(460)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(35, 30, 35, 25)
+        c_layout.setSpacing(22)
+
+        formatted_msg = message.replace("\n", "<br>")
+        lbl_msg = QLabel(f"<div style='line-height: 150%; text-align: center;'>{formatted_msg}</div>", container)
+        lbl_msg.setFont(QFont("Inter", 13, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000;")
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setAlignment(Qt.AlignCenter)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedSize(130, 42)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+
+        btn_layout.addWidget(btn_confirm)
+
+        c_layout.addWidget(lbl_msg)
+        c_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
+
+
 class CustomInputDialog(QDialog):
     """카테고리/시술 입력용 맞춤형 모달 팝업"""
     def __init__(self, title: str, label_text: str, default_text: str = "", is_price: bool = False, default_price: int = 1000, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setFixedSize(360, 220)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.setStyleSheet("background-color: #FFFFFF; border-radius: 12px;")
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(400, 230)
 
         self.is_price = is_price
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(25, 20, 25, 20)
-        layout.setSpacing(15)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
 
-        lbl_info = QLabel(label_text, self)
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(25, 25, 25, 20)
+        c_layout.setSpacing(16)
+
+        lbl_info = QLabel(label_text, container)
         lbl_info.setFont(QFont("Inter", 13, QFont.Bold))
-        lbl_info.setStyleSheet("color: #000000; border: none;")
+        lbl_info.setStyleSheet("color: #000000; border: none; background: transparent;")
         lbl_info.setAlignment(Qt.AlignCenter)
-        layout.addWidget(lbl_info)
+        c_layout.addWidget(lbl_info)
 
         if not is_price:
-            self.input_widget = QLineEdit(default_text, self)
+            self.input_widget = QLineEdit(default_text, container)
             self.input_widget.setPlaceholderText("명칭을 입력하세요")
+            self.input_widget.setFixedHeight(40)
             self.input_widget.setStyleSheet(f"""
                 QLineEdit {{
                     border: 1.5px solid {Colors.BORDER};
@@ -117,17 +186,19 @@ class CustomInputDialog(QDialog):
                     padding: 8px 12px;
                     font-size: 13px;
                     color: #000000;
-                    background-color: #FFFFFF;
+                    background-color: #FAFAFA;
                 }}
                 QLineEdit:focus {{
                     border: 1.5px solid {Colors.PRIMARY};
+                    background-color: #FFFFFF;
                 }}
             """)
         else:
-            self.input_widget = QSpinBox(self)
+            self.input_widget = QSpinBox(container)
             self.input_widget.setRange(0, 10000000)
             self.input_widget.setSingleStep(1000)
             self.input_widget.setValue(default_price)
+            self.input_widget.setFixedHeight(40)
             self.input_widget.setStyleSheet(f"""
                 QSpinBox {{
                     border: 1.5px solid {Colors.BORDER};
@@ -135,29 +206,30 @@ class CustomInputDialog(QDialog):
                     padding: 8px 12px;
                     font-size: 13px;
                     color: #000000;
-                    background-color: #FFFFFF;
+                    background-color: #FAFAFA;
                 }}
                 QSpinBox:focus {{
                     border: 1.5px solid {Colors.PRIMARY};
+                    background-color: #FFFFFF;
                 }}
             """)
 
-        layout.addWidget(self.input_widget)
+        c_layout.addWidget(self.input_widget)
 
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
+        btn_layout.setAlignment(Qt.AlignCenter)
 
-        self.btn_confirm = QPushButton("확인", self)
-        self.btn_confirm.setFixedSize(140, 42)
+        self.btn_confirm = QPushButton("확인", container)
+        self.btn_confirm.setFixedSize(130, 42)
         self.btn_confirm.setCursor(Qt.PointingHandCursor)
+        self.btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
         self.btn_confirm.setStyleSheet(f"""
             QPushButton {{
                 background-color: #FFFFFF;
                 color: {Colors.PRIMARY};
                 border: 2px solid {Colors.PRIMARY};
                 border-radius: 8px;
-                font-size: 14px;
-                font-weight: bold;
             }}
             QPushButton:hover {{
                 background-color: #F2F9F7;
@@ -165,17 +237,16 @@ class CustomInputDialog(QDialog):
         """)
         self.btn_confirm.clicked.connect(self.accept)
 
-        self.btn_cancel = QPushButton("취소", self)
-        self.btn_cancel.setFixedSize(140, 42)
+        self.btn_cancel = QPushButton("취소", container)
+        self.btn_cancel.setFixedSize(130, 42)
         self.btn_cancel.setCursor(Qt.PointingHandCursor)
+        self.btn_cancel.setFont(QFont("Inter", 12, QFont.Bold))
         self.btn_cancel.setStyleSheet(f"""
             QPushButton {{
                 background-color: {Colors.PRIMARY};
                 color: #FFFFFF;
                 border: none;
                 border-radius: 8px;
-                font-size: 14px;
-                font-weight: bold;
             }}
             QPushButton:hover {{
                 background-color: {Colors.PRIMARY_HOVER};
@@ -185,7 +256,9 @@ class CustomInputDialog(QDialog):
 
         btn_layout.addWidget(self.btn_confirm)
         btn_layout.addWidget(self.btn_cancel)
-        layout.addLayout(btn_layout)
+        c_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
 
     def get_value(self):
         if not self.is_price:
@@ -194,91 +267,116 @@ class CustomInputDialog(QDialog):
 
 
 class CustomServiceEditDialog(QDialog):
-    """시술 명칭 및 가격 통합 수정 팝업"""
+    """시술 명칭 및 가격 통합 수정 맞춤형 모달 팝업"""
     def __init__(self, default_name: str, default_price: int, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("시술 항목 수정")
-        self.setFixedSize(380, 260)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.setStyleSheet("background-color: #FFFFFF; border-radius: 12px;")
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(400, 270)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(25, 20, 25, 20)
-        layout.setSpacing(12)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
 
-        lbl_info = QLabel("시술 정보를 수정합니다", self)
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(25, 25, 25, 20)
+        c_layout.setSpacing(14)
+
+        lbl_info = QLabel("시술 정보를 수정합니다", container)
         lbl_info.setFont(QFont("Inter", 13, QFont.Bold))
-        lbl_info.setStyleSheet("color: #000000; border: none;")
+        lbl_info.setStyleSheet("color: #000000; border: none; background: transparent;")
         lbl_info.setAlignment(Qt.AlignCenter)
-        layout.addWidget(lbl_info)
+        c_layout.addWidget(lbl_info)
 
-        self.txt_name = QLineEdit(default_name, self)
+        self.txt_name = QLineEdit(default_name, container)
+        self.txt_name.setFixedHeight(38)
         self.txt_name.setStyleSheet(f"""
             QLineEdit {{
                 border: 1.5px solid {Colors.BORDER};
                 border-radius: 6px;
-                padding: 8px 12px;
+                padding: 6px 12px;
                 font-size: 13px;
                 color: #000000;
+                background-color: #FAFAFA;
             }}
-            QLineEdit:focus {{ border: 1.5px solid {Colors.PRIMARY}; }}
+            QLineEdit:focus {{
+                border: 1.5px solid {Colors.PRIMARY};
+                background-color: #FFFFFF;
+            }}
         """)
-        layout.addWidget(self.txt_name)
+        c_layout.addWidget(self.txt_name)
 
-        self.spn_price = QSpinBox(self)
+        self.spn_price = QSpinBox(container)
         self.spn_price.setRange(0, 10000000)
         self.spn_price.setSingleStep(1000)
         self.spn_price.setValue(default_price)
+        self.spn_price.setFixedHeight(38)
         self.spn_price.setStyleSheet(f"""
             QSpinBox {{
                 border: 1.5px solid {Colors.BORDER};
                 border-radius: 6px;
-                padding: 8px 12px;
+                padding: 6px 12px;
                 font-size: 13px;
                 color: #000000;
+                background-color: #FAFAFA;
             }}
-            QSpinBox:focus {{ border: 1.5px solid {Colors.PRIMARY}; }}
+            QSpinBox:focus {{
+                border: 1.5px solid {Colors.PRIMARY};
+                background-color: #FFFFFF;
+            }}
         """)
-        layout.addWidget(self.spn_price)
+        c_layout.addWidget(self.spn_price)
 
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
+        btn_layout.setAlignment(Qt.AlignCenter)
 
-        self.btn_confirm = QPushButton("확인", self)
-        self.btn_confirm.setFixedSize(140, 42)
+        self.btn_confirm = QPushButton("확인", container)
+        self.btn_confirm.setFixedSize(130, 42)
         self.btn_confirm.setCursor(Qt.PointingHandCursor)
+        self.btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
         self.btn_confirm.setStyleSheet(f"""
             QPushButton {{
                 background-color: #FFFFFF;
                 color: {Colors.PRIMARY};
                 border: 2px solid {Colors.PRIMARY};
                 border-radius: 8px;
-                font-size: 14px;
-                font-weight: bold;
             }}
-            QPushButton:hover {{ background-color: #F2F9F7; }}
+            QPushButton:hover {{
+                background-color: #F2F9F7;
+            }}
         """)
         self.btn_confirm.clicked.connect(self.accept)
 
-        self.btn_cancel = QPushButton("취소", self)
-        self.btn_cancel.setFixedSize(140, 42)
+        self.btn_cancel = QPushButton("취소", container)
+        self.btn_cancel.setFixedSize(130, 42)
         self.btn_cancel.setCursor(Qt.PointingHandCursor)
+        self.btn_cancel.setFont(QFont("Inter", 12, QFont.Bold))
         self.btn_cancel.setStyleSheet(f"""
             QPushButton {{
                 background-color: {Colors.PRIMARY};
                 color: #FFFFFF;
                 border: none;
                 border-radius: 8px;
-                font-size: 14px;
-                font-weight: bold;
             }}
-            QPushButton:hover {{ background-color: {Colors.PRIMARY_HOVER}; }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
         """)
         self.btn_cancel.clicked.connect(self.reject)
 
         btn_layout.addWidget(self.btn_confirm)
         btn_layout.addWidget(self.btn_cancel)
-        layout.addLayout(btn_layout)
+        c_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
 
     def get_data(self):
         return self.txt_name.text().strip(), self.spn_price.value()
@@ -459,14 +557,14 @@ class CategoryCard(BaseCard):
 
     def on_edit(self):
         if self.is_system or self.name == "선결제":
-            QMessageBox.warning(self, "수정 불가", "<b>'선결제'</b> 카테고리 명칭은 수정할 수 없습니다.")
+            CustomAlertDialog("수정 불가", "'선결제' 카테고리 명칭은 수정할 수 없습니다.", self).exec()
             return
 
         dlg = CustomInputDialog("카테고리 수정", "카테고리 명칭을 수정하세요", default_text=self.name, parent=self)
         if dlg.exec_() == QDialog.Accepted:
             new_name = dlg.get_value()
             if new_name == "선결제":
-                QMessageBox.warning(self, "중복 금지", "'선결제' 이름으로는 변경할 수 없습니다.")
+                CustomAlertDialog("중복 금지", "'선결제' 이름으로는 변경할 수 없습니다.", self).exec()
                 return
             if new_name and new_name != self.name:
                 self.name = new_name
@@ -477,7 +575,7 @@ class CategoryCard(BaseCard):
 
     def on_toggle_delete(self):
         if self.is_system or self.name == "선결제":
-            QMessageBox.warning(self, "삭제 불가", "<b>'선결제'</b> 카테고리는 시스템 기본 항목이므로 삭제할 수 없습니다.")
+            CustomAlertDialog("삭제 불가", "'선결제' 카테고리는 시스템 기본 항목이므로 삭제할 수 없습니다.", self).exec()
             return
         super().on_toggle_delete()
 
@@ -540,14 +638,14 @@ class CategoryBadgeTab(BaseCard):
 
     def on_edit(self):
         if self.is_system or self.name == "선결제":
-            QMessageBox.warning(self, "수정 불가", "<b>'선결제'</b> 카테고리 명칭은 수정할 수 없습니다.")
+            CustomAlertDialog("수정 불가", "'선결제' 카테고리 명칭은 수정할 수 없습니다.", self).exec()
             return
 
         dlg = CustomInputDialog("카테고리 수정", "카테고리 명칭을 수정하세요", default_text=self.name, parent=self)
         if dlg.exec_() == QDialog.Accepted:
             new_name = dlg.get_value()
             if new_name == "선결제":
-                QMessageBox.warning(self, "중복 금지", "'선결제' 이름으로는 변경할 수 없습니다.")
+                CustomAlertDialog("중복 금지", "'선결제' 이름으로는 변경할 수 없습니다.", self).exec()
                 return
             if new_name and new_name != self.name:
                 self.name = new_name
@@ -558,7 +656,7 @@ class CategoryBadgeTab(BaseCard):
 
     def on_toggle_delete(self):
         if self.is_system or self.name == "선결제":
-            QMessageBox.warning(self, "삭제 불가", "<b>'선결제'</b> 카테고리는 시스템 기본 항목이므로 삭제할 수 없습니다.")
+            CustomAlertDialog("삭제 불가", "'선결제' 카테고리는 시스템 기본 항목이므로 삭제할 수 없습니다.", self).exec()
             return
         super().on_toggle_delete()
 
@@ -958,6 +1056,11 @@ class SettingsCategoryView(QWidget):
         self.render_categories()
         self.render_services()
 
+    def showEvent(self, event):
+        """화면이 활성화되거나 처음 렌더링될 때 정확한 너비를 계산하여 가로로 재배치"""
+        super().showEvent(event)
+        QTimer.singleShot(0, self.render_services)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.render_services()
@@ -1050,13 +1153,16 @@ class SettingsCategoryView(QWidget):
 
     def get_calculated_columns(self) -> int:
         viewport_w = self.svc_scroll_area.viewport().width()
+        
+        # 레이아웃 미계산으로 인한 초기 뷰포트 측정 오류 시 기본 5열 반환
+        if viewport_w < 300:
+            return 5
+
         card_w = 120
         spacing = 12
         margins = 30
         avail_w = viewport_w - margins
 
-        if avail_w <= 0:
-            return 5
         cols = max(1, (avail_w + spacing) // (card_w + spacing))
         return cols
 
@@ -1114,7 +1220,7 @@ class SettingsCategoryView(QWidget):
         if dlg.exec_() == QDialog.Accepted:
             cat_name = dlg.get_value()
             if cat_name == "선결제":
-                QMessageBox.warning(self, "중복 오류", "'선결제' 카테고리는 시스템 기본 항목으로 이미 존재합니다.")
+                CustomAlertDialog("중복 오류", "'선결제' 카테고리는 시스템 기본 항목으로 이미 존재합니다.", self).exec()
                 return
             if cat_name:
                 existing_names = [c["name"] for c in self.categories_data]
@@ -1126,7 +1232,7 @@ class SettingsCategoryView(QWidget):
 
     def on_add_service(self):
         if not self.current_category:
-            QMessageBox.warning(self, "경고", "시술을 추가할 카테고리를 먼저 선택하거나 생성해 주세요.")
+            CustomAlertDialog("경고", "시술을 추가할 카테고리를 먼저 선택하거나 생성해 주세요.", self).exec()
             return
 
         dlg_name = CustomInputDialog("시술 추가", f"[{self.current_category}] 새 시술 명칭을 입력하세요", parent=self)
@@ -1150,7 +1256,7 @@ class SettingsCategoryView(QWidget):
         success, message = self.db_manager.save_all_changes(self.categories_data, self.services_map)
 
         if success:
-            QMessageBox.information(self, "저장 완료", message)
+            CustomAlertDialog("저장 완료", message, self).exec()
             self.categories_data, self.services_map = self.db_manager.fetch_active_categories_and_services()
             if self.categories_data:
                 valid_names = [c["name"] for c in self.categories_data]
@@ -1162,4 +1268,4 @@ class SettingsCategoryView(QWidget):
             self.render_categories()
             self.render_services()
         else:
-            QMessageBox.critical(self, "저장 실패", message)
+            CustomAlertDialog("저장 실패", message, self).exec()

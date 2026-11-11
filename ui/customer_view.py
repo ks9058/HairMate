@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
-    QFrame, QMessageBox, QAbstractItemView, QDialog, QStackedWidget,
+    QFrame, QAbstractItemView, QDialog, QStackedWidget,
     QTextEdit, QProgressBar, QToolTip
 )
 from PySide6.QtCore import Qt, Signal
@@ -34,6 +34,139 @@ SCROLLBAR_STYLE = """
         background: none;
     }
 """
+
+
+class CustomAlertDialog(QDialog):
+    """시스템 기본 QMessageBox를 대체하는 모던 커스텀 안내/경고 팝업"""
+
+    def __init__(self, title: str, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setMinimumWidth(460)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(35, 30, 35, 25)
+        c_layout.setSpacing(22)
+
+        formatted_msg = message.replace("\n", "<br>")
+        lbl_msg = QLabel(f"<div style='line-height: 150%; text-align: center;'>{formatted_msg}</div>", container)
+        lbl_msg.setFont(QFont("Inter", 13, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000;")
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setAlignment(Qt.AlignCenter)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedSize(130, 42)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+
+        btn_layout.addWidget(btn_confirm)
+
+        c_layout.addWidget(lbl_msg)
+        c_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
+
+
+class ConfirmCustomerDeleteDialog(QDialog):
+    """고객 삭제 확인 커스텀 모달 팝업"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(480, 200)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(30, 30, 30, 25)
+        c_layout.setSpacing(24)
+
+        lbl_msg = QLabel("해당 고객을 정말로 <span style='color:#E53E3E; font-weight:bold;'>삭제</span> 하시겠습니까?", container)
+        lbl_msg.setFont(QFont("Inter", 14, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setStyleSheet("color: #000000; background: transparent; border: none;")
+        c_layout.addWidget(lbl_msg)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(14)
+        btn_layout.setAlignment(Qt.AlignCenter)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedSize(130, 42)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: {Colors.PRIMARY};
+                border: 2px solid {Colors.PRIMARY};
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: #F0FDF4;
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+
+        btn_cancel = QPushButton("취소", container)
+        btn_cancel.setFixedSize(130, 42)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_cancel.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_cancel.clicked.connect(self.reject)
+
+        btn_layout.addWidget(btn_confirm)
+        btn_layout.addWidget(btn_cancel)
+
+        c_layout.addLayout(btn_layout)
+        outer_layout.addWidget(container)
 
 
 class PreferenceBarRow(QWidget):
@@ -146,78 +279,15 @@ class RoundedHeader(QHeaderView):
         painter.restore()
 
 
-class ConfirmCustomerDeleteDialog(QDialog):
-    """고객 삭제 확인 팝업 모달"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("고객 삭제 확인")
-        self.setFixedSize(380, 180)
-        self.setStyleSheet("background-color: #FFFFFF;")
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 30, 30, 25)
-        layout.setSpacing(25)
-
-        lbl_msg = QLabel("해당 고객을 정말로 <span style='color:#E53E3E; font-weight:bold;'>삭제</span> 하시겠습니까?", self)
-        lbl_msg.setFont(QFont("Inter", 14, QFont.Bold))
-        lbl_msg.setAlignment(Qt.AlignCenter)
-        lbl_msg.setStyleSheet("color: #000000; background: transparent;")
-        layout.addWidget(lbl_msg)
-
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(15)
-
-        btn_confirm = QPushButton("확인", self)
-        btn_confirm.setFixedHeight(42)
-        btn_confirm.setCursor(Qt.PointingHandCursor)
-        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
-        btn_confirm.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #FFFFFF;
-                color: {Colors.PRIMARY};
-                border: 2px solid {Colors.PRIMARY};
-                border-radius: 8px;
-            }}
-            QPushButton:hover {{
-                background-color: #F0FDF4;
-            }}
-        """)
-        btn_confirm.clicked.connect(self.accept)
-
-        btn_cancel = QPushButton("취소", self)
-        btn_cancel.setFixedHeight(42)
-        btn_cancel.setCursor(Qt.PointingHandCursor)
-        btn_cancel.setFont(QFont("Inter", 12, QFont.Bold))
-        btn_cancel.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Colors.PRIMARY};
-                color: #FFFFFF;
-                border: none;
-                border-radius: 8px;
-            }}
-            QPushButton:hover {{
-                background-color: {Colors.PRIMARY_HOVER};
-            }}
-        """)
-        btn_cancel.clicked.connect(self.reject)
-
-        btn_layout.addWidget(btn_confirm)
-        btn_layout.addWidget(btn_cancel)
-
-        layout.addLayout(btn_layout)
-
-
 class CustomerView(QWidget):
     """고객 관리 메인 뷰"""
     page_changed = Signal(bool)
 
     CATEGORY_COLORS = {
-        "커트": "#D4AF37",    # 골드 / 노랑
-        "펌": "#EEDCBA",      # 베이지 / 크림
-        "염색": "#1F3A60",    # 다크 네이비
-        "선결제": "#9B8AA8"   # 퍼플 / 라벤더
+        "커트": "#D4AF37",
+        "펌": "#EEDCBA",
+        "염색": "#1F3A60",
+        "선결제": "#9B8AA8"
     }
     DEFAULT_COLORS = ["#00594C", "#E67E22", "#2980B9", "#8E44AD", "#27AE60"]
 
@@ -236,7 +306,7 @@ class CustomerView(QWidget):
         main_layout.setSpacing(20)
 
         # -------------------------------------------------------------
-        # 1. 좌측 고객 목록 패널 (가로 비율 2)
+        # 1. 좌측 고객 목록 패널
         # -------------------------------------------------------------
         left_outer = QFrame(self)
         left_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
@@ -308,19 +378,15 @@ class CustomerView(QWidget):
             QTableWidget::item {
                 border-bottom: 1px solid #E0E0E0;
                 padding: 8px;
-                outline: none;
             }
             QTableWidget::item:selected {
                 background-color: #E8F5E9;
                 color: #000000;
                 font-weight: bold;
-                outline: none;
             }
         """)
         self.table.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
-
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
 
         self.table.itemSelectionChanged.connect(self.on_table_selection_changed)
         table_layout.addWidget(self.table)
@@ -329,7 +395,7 @@ class CustomerView(QWidget):
         main_layout.addWidget(left_outer, 2)
 
         # -------------------------------------------------------------
-        # 2. 우측 스택 영역 (가로 비율 3)
+        # 2. 우측 스택 영역
         # -------------------------------------------------------------
         self.right_container = QWidget(self)
         right_main_layout = QVBoxLayout(self.right_container)
@@ -342,7 +408,6 @@ class CustomerView(QWidget):
         page_reg = QWidget()
         page_reg_layout = QVBoxLayout(page_reg)
         page_reg_layout.setContentsMargins(0, 0, 0, 0)
-
         page_reg_layout.addStretch(1)
 
         reg_container = QWidget(page_reg)
@@ -474,14 +539,12 @@ class CustomerView(QWidget):
         page_detail_layout.setContentsMargins(0, 0, 0, 0)
         page_detail_layout.setSpacing(8)
 
-        # 고객 정보 조회 타이틀
         lbl_detail_title = QLabel("고객 정보 조회", page_detail)
         lbl_detail_title.setFont(QFont("Inter", 20, QFont.Bold))
         lbl_detail_title.setStyleSheet("color: #000000; background: transparent;")
         lbl_detail_title.setAlignment(Qt.AlignCenter)
         page_detail_layout.addWidget(lbl_detail_title)
 
-        # 탭 버튼 그룹
         tab_button_layout = QHBoxLayout()
         tab_button_layout.setSpacing(8)
 
@@ -502,7 +565,6 @@ class CustomerView(QWidget):
         tab_button_layout.addWidget(self.btn_tab_stats, 1)
         page_detail_layout.addLayout(tab_button_layout)
 
-        # 탭 스택 (0: 상세정보, 1: 방문 및 통계)
         self.detail_tab_stack = QStackedWidget(page_detail)
 
         # Tab 0: 상세 정보
@@ -755,8 +817,27 @@ class CustomerView(QWidget):
 
         self.switch_detail_tab(0)
 
+    def update_table_column_widths(self):
+        total_width = self.table.viewport().width()
+        if total_width > 0:
+            w0 = int(total_width * 0.15)
+            w1 = int(total_width * 0.25)
+            w2 = int(total_width * 0.30)
+            w3 = total_width - (w0 + w1 + w2)
+            self.table.setColumnWidth(0, w0)
+            self.table.setColumnWidth(1, w1)
+            self.table.setColumnWidth(2, w2)
+            self.table.setColumnWidth(3, w3)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.update_table_column_widths()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_table_column_widths()
+
     def on_visit_table_item_entered(self, item):
-        """방문 테이블 항목 호버 시 메뉴별 수량 툴팁 팝업 표시"""
         if item and item.toolTip():
             QToolTip.showText(QCursor.pos(), item.toolTip(), self.visit_table)
 
@@ -865,7 +946,8 @@ class CustomerView(QWidget):
 
             self.table.insertRow(row_count)
 
-            item_no = QTableWidgetItem(str(row_count + 1))
+            # 1, 2, 3 대신 DB 고유 고객번호(cust["id"])를 표시
+            item_no = QTableWidgetItem(str(cust["id"]))
             item_no.setTextAlignment(Qt.AlignCenter)
             item_no.setData(Qt.UserRole, cust["id"])
             self.table.setItem(row_count, 0, item_no)
@@ -878,7 +960,7 @@ class CustomerView(QWidget):
             item_phone.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row_count, 2, item_phone)
 
-            item_recent = QTableWidgetItem(cust["recent_visit"])
+            item_recent = QTableWidgetItem(cust["recent_visit"] or "-")
             item_recent.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row_count, 3, item_recent)
 
@@ -919,7 +1001,6 @@ class CustomerView(QWidget):
                 break
 
     def load_customer_stats(self, customer_id: int):
-        """선택된 고객의 방문 이력 및 5종 통계/선호도 갱신"""
         def format_dur(dur_min: int) -> str:
             if dur_min <= 0:
                 return "0분"
@@ -929,14 +1010,12 @@ class CustomerView(QWidget):
                 return f"{h}시간" if m == 0 else f"{h}시간 {m}분"
             return f"{dur_min}분"
 
-        # 1. 과거 시술 리스트 렌더링 (각 시술별 선택 수량 툴팁 구성)
         history = self.db_manager.get_customer_visit_history(customer_id)
         self.visit_table.setRowCount(0)
         for idx, item in enumerate(history):
             self.visit_table.insertRow(idx)
             
             details = item.get("service_details", [])
-            
             if details:
                 detail_lines = [f"• {d['name']}: {d['count']}개" for d in details]
                 tooltip_info = f"[시술 항목별 선택 수량]\n" + "\n".join(detail_lines)
@@ -968,7 +1047,6 @@ class CustomerView(QWidget):
             item_des.setToolTip(tooltip_info)
             self.visit_table.setItem(idx, 4, item_des)
 
-        # 2. 통계 데이터 갱신
         stats = self.db_manager.get_customer_stats(customer_id)
         self.update_stat_card_val(self.card_visits, f"{stats['total_visits']}회")
         self.update_stat_card_val(self.card_total, f"{stats['total_amount']:,}원")
@@ -976,7 +1054,6 @@ class CustomerView(QWidget):
         self.update_stat_card_val(self.card_total_dur, format_dur(stats.get("total_duration", 0)))
         self.update_stat_card_val(self.card_avg_dur, format_dur(stats.get("avg_duration", 0)))
 
-        # 3. 시술 선호도 차트 갱신
         while self.pref_container.count():
             item = self.pref_container.takeAt(0)
             if item.widget():
@@ -1025,26 +1102,26 @@ class CustomerView(QWidget):
         memo = self.txt_reg_memo.text().strip()
 
         if not name:
-            QMessageBox.warning(self, "입력 오류", "이름을 입력해 주세요.")
+            CustomAlertDialog("입력 오류", "이름을 입력해 주세요.", self).exec()
             self.txt_reg_name.setFocus()
             return
 
         if not phone:
-            QMessageBox.warning(self, "입력 오류", "전화번호를 입력해 주세요.")
+            CustomAlertDialog("입력 오류", "전화번호를 입력해 주세요.", self).exec()
             self.txt_reg_phone.setFocus()
             return
 
         success, err_msg = self.db_manager.add_customer(name, phone, memo)
         if success:
-            QMessageBox.information(self, "등록 완료", f"'{name}' 고객이 성공적으로 등록되었습니다.")
+            CustomAlertDialog("등록 완료", f"'{name}' 고객이 성공적으로 등록되었습니다.", self).exec()
             self.load_customer_list()
             self.reset_form()
         else:
-            QMessageBox.warning(self, "등록 실패", err_msg)
+            CustomAlertDialog("등록 실패", err_msg, self).exec()
 
     def update_customer_info(self):
         if self.selected_customer_id is None:
-            QMessageBox.warning(self, "선택 오류", "수정할 고객을 먼저 목록에서 선택해 주세요.")
+            CustomAlertDialog("선택 오류", "수정할 고객을 먼저 목록에서 선택해 주세요.", self).exec()
             return
 
         name = self.txt_info_name.text().strip()
@@ -1052,23 +1129,23 @@ class CustomerView(QWidget):
         memo = self.txt_info_memo.toPlainText().strip()
 
         if not name:
-            QMessageBox.warning(self, "입력 오류", "이름을 입력해 주세요.")
+            CustomAlertDialog("입력 오류", "이름을 입력해 주세요.", self).exec()
             self.txt_info_name.setFocus()
             return
 
         if not phone:
-            QMessageBox.warning(self, "입력 오류", "전화번호를 입력해 주세요.")
+            CustomAlertDialog("입력 오류", "전화번호를 입력해 주세요.", self).exec()
             self.txt_info_phone.setFocus()
             return
 
         target_id = int(self.selected_customer_id)
         success, err_msg = self.db_manager.update_customer(target_id, name, phone, memo)
         if success:
-            QMessageBox.information(self, "수정 완료", f"'{name}' 고객의 정보가 수정되었습니다.")
+            CustomAlertDialog("수정 완료", f"'{name}' 고객의 정보가 수정되었습니다.", self).exec()
             self.load_customer_list()
             self.reselect_customer(target_id)
         else:
-            QMessageBox.warning(self, "수정 실패", err_msg)
+            CustomAlertDialog("수정 실패", err_msg, self).exec()
 
     def delete_customer_info(self):
         if self.selected_customer_id is None:
@@ -1077,8 +1154,8 @@ class CustomerView(QWidget):
         dialog = ConfirmCustomerDeleteDialog(self)
         if dialog.exec() == QDialog.Accepted:
             if self.db_manager.delete_customer(self.selected_customer_id):
-                QMessageBox.information(self, "삭제 완료", "고객 정보가 삭제되었습니다.")
+                CustomAlertDialog("삭제 완료", "고객 정보가 삭제되었습니다.", self).exec()
                 self.load_customer_list()
                 self.reset_form()
             else:
-                QMessageBox.critical(self, "오류", "고객 삭제 처리 중 오류가 발생했습니다.")
+                CustomAlertDialog("오류", "고객 삭제 처리 중 오류가 발생했습니다.", self).exec()

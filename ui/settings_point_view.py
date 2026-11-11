@@ -1,11 +1,69 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QFrame, QMessageBox, QLineEdit
+    QFrame, QLineEdit, QDialog
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from ui.theme import Colors, Styles
 from core.db_manager import DBManager
+
+
+class CustomAlertDialog(QDialog):
+    """시스템 기본 QMessageBox를 대체하는 테마 커스텀 안내/알림 팝업"""
+
+    def __init__(self, title: str, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setMinimumWidth(460)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(35, 30, 35, 25)
+        c_layout.setSpacing(22)
+
+        formatted_msg = message.replace("\n", "<br>")
+        lbl_msg = QLabel(f"<div style='line-height: 150%; text-align: center;'>{formatted_msg}</div>", container)
+        lbl_msg.setFont(QFont("Inter", 13, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000;")
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setAlignment(Qt.AlignCenter)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedSize(130, 42)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+
+        btn_layout.addWidget(btn_confirm)
+
+        c_layout.addWidget(lbl_msg)
+        c_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
 
 
 class ArrowSpinBox(QWidget):
@@ -16,7 +74,7 @@ class ArrowSpinBox(QWidget):
     def __init__(self, default_val=10, parent=None):
         super().__init__(parent)
         self._value = default_val
-        self.setFixedHeight(44)  # 위젯 높이 확대 (36px -> 44px)
+        self.setFixedHeight(44)
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -42,7 +100,7 @@ class ArrowSpinBox(QWidget):
         """)
         self.edit.editingFinished.connect(self._on_editing_finished)
 
-        # 2. ▲ / ▼ 삼각형 버튼 영역 (높이에 맞게 확장)
+        # 2. ▲ / ▼ 삼각형 버튼 영역
         btn_container = QWidget(self)
         btn_container.setFixedWidth(26)
         btn_layout = QVBoxLayout(btn_container)
@@ -145,7 +203,7 @@ class SettingsPointView(QWidget):
         center_container.setFixedWidth(520)
         center_layout = QVBoxLayout(center_container)
         center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(25)  # 타이틀, 박스, 버튼 간격 늘림 (20 -> 25)
+        center_layout.setSpacing(25)
 
         # 1. 메인 타이틀
         lbl_main_title = QLabel("포인트 적립 비율 변경", center_container)
@@ -178,9 +236,7 @@ class SettingsPointView(QWidget):
         inner_box.setAttribute(Qt.WA_StyledBackground, True)
 
         inner_layout = QVBoxLayout(inner_box)
-        # 상하 내부 여백 확장 (25px -> 40px)
         inner_layout.setContentsMargins(35, 35, 35, 35)
-        # 항목 간 세로 간격 확장 (15px -> 25px)
         inner_layout.setSpacing(20)
 
         # 3.1 일반 적립 비율 행
@@ -224,7 +280,7 @@ class SettingsPointView(QWidget):
         outer_layout.addWidget(inner_box)
         center_layout.addWidget(outer_box)
 
-        # 4. 하단 저장하기 버튼 (높이 48px -> 52px 확장)
+        # 4. 하단 저장하기 버튼
         self.btn_save = QPushButton("저장하기", center_container)
         self.btn_save.setFixedHeight(52)
         self.btn_save.setCursor(Qt.PointingHandCursor)
@@ -271,13 +327,13 @@ class SettingsPointView(QWidget):
         prepaid_val = self.spn_prepaid.value()
 
         if not (0 <= general_val <= 100) or not (0 <= prepaid_val <= 100):
-            QMessageBox.warning(self, "입력 오류", "적립률은 0%에서 100% 사이의 값이어야 합니다.")
+            CustomAlertDialog("입력 오류", "적립률은 0%에서 100% 사이의 값이어야 합니다.", self).exec()
             return
 
         res_general = self.db_manager.set_setting(self.KEY_GENERAL_RATE, str(general_val))
         res_prepaid = self.db_manager.set_setting(self.KEY_PREPAID_RATE, str(prepaid_val))
 
         if res_general and res_prepaid:
-            QMessageBox.information(self, "저장 완료", "포인트 적립 비율이 성공적으로 저장되었습니다.")
+            CustomAlertDialog("저장 완료", "포인트 적립 비율이 성공적으로 저장되었습니다.", self).exec()
         else:
-            QMessageBox.critical(self, "저장 실패", "포인트 적립 비율 저장 중 오류가 발생했습니다.")
+            CustomAlertDialog("저장 실패", "포인트 적립 비율 저장 중 오류가 발생했습니다.", self).exec()

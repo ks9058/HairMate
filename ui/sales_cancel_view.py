@@ -193,7 +193,8 @@ class SalesCancelView(QWidget):
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(25, 15, 25, 20)
+        # 결제등록과 일치하도록 하단 여백 25px 수정
+        main_layout.setContentsMargins(25, 15, 25, 25)
         main_layout.setSpacing(15)
 
         outer_container = QFrame(self)
@@ -201,8 +202,9 @@ class SalesCancelView(QWidget):
         outer_container.setAttribute(Qt.WA_StyledBackground, True)
 
         outer_layout = QVBoxLayout(outer_container)
-        outer_layout.setContentsMargins(10, 10, 10, 10)
-        outer_layout.setSpacing(10)
+        # 결제등록 좌측 패널과 동일하게 내부 여백 8px 및 요소 간격 8px 적용
+        outer_layout.setContentsMargins(8, 8, 8, 8)
+        outer_layout.setSpacing(8)
 
         # 1. 상단 필터 영역
         filter_layout = QHBoxLayout()
@@ -408,10 +410,11 @@ class SalesCancelView(QWidget):
             }
         """)
         
-        # 💡 [핵심] 컬럼 가로폭 개별 최적화
+        self.table.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
+
+        # 컬럼 가로폭 개별 최적화
         h_header = self.table.horizontalHeader()
         h_header.setSectionResizeMode(QHeaderView.Stretch)
-        
 
         # 1: 고객이름 (120px 고정)
         h_header.setSectionResizeMode(1, QHeaderView.Fixed)
@@ -433,11 +436,9 @@ class SalesCancelView(QWidget):
         h_header.setSectionResizeMode(5, QHeaderView.Fixed)
         self.table.setColumnWidth(5, 130)
 
-        # 6: 결제일시 (150px 고정 확보하여 날짜+시간 출력 보장)
+        # 6: 결제일시 (150px 고정)
         h_header.setSectionResizeMode(6, QHeaderView.Fixed)
         self.table.setColumnWidth(6, 150)
-
-
 
         self.table.setMouseTracking(True)
         self.table.cellEntered.connect(self.on_cell_entered)
