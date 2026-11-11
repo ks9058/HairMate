@@ -34,22 +34,59 @@ class GoogleDriveService:
                 self.creds = None
 
     def is_authenticated(self) -> bool:
-        """인증 완료 여부 확인"""
+        """인증 완료 및 토큰 유효 여부 확인"""
         return self.creds is not None and self.creds.valid
 
     def authenticate(self) -> bool:
-        """브라우저를 열어 구글 OAuth 2.0 로그인 진행"""
-        try:
-            if not os.path.exists(self.client_secret_file):
-                raise FileNotFoundError(f"{self.client_secret_file} 파일이 필요합니다.")
+            """브라우저를 열어 구글 OAuth 2.0 로그인 진행"""
+            try:
+                if not os.path.exists(self.client_secret_file):
+                    raise FileNotFoundError(f"{self.client_secret_file} 파일이 필요합니다.")
 
-            flow = InstalledAppFlow.from_client_secrets_file(self.client_secret_file, SCOPES)
-            self.creds = flow.run_local_server(port=0)
-            with open(self.token_file, 'w') as token:
-                token.write(self.creds.to_json())
+                flow = InstalledAppFlow.from_client_secrets_file(self.client_secret_file, SCOPES)
+                # prompt='select_account consent'로 계정 선택창 및 동의 화면 강제 출력
+                self.creds = flow.run_local_server(port=0, prompt='select_account consent')
+                
+                with open(self.token_file, 'w') as token:
+                    token.write(self.creds.to_json())
+                return True
+            except Exception as e:
+                print(f"[Google Auth Error] {e}")
+                return False
+
+    def get_account_info(self) -> dict:
+        """연동된 구글 계정 이메일 및 사용자 정보 조회"""
+        if not self.is_authenticated():
+            return {"email": "미인증", "name": "알 수 없음"}
+
+        try:
+            service = build('drive', 'v3', credentials=self.creds)
+            about = service.about().get(fields="user").execute()
+            user = about.get('user', {})
+            return {
+                "email": user.get('emailAddress', '계정 정보 없음'),
+                "name": user.get('displayName', '사용자')
+            }
+        except Exception as e:
+            print(f"[Google Get Account Error] {e}")
+            return {"email": "조회 실패", "name": "알 수 없음"}
+
+    def get_last_auth_date(self) -> str:
+        """token.json 생성/수정일자 반환 (최근 인증 일시)"""
+        if os.path.exists(self.token_file):
+            mtime = os.path.getmtime(self.token_file)
+            return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+        return "-"
+
+    def disconnect(self) -> bool:
+        """구글 계정 연동 해제 (token.json 삭제 및 메모리 초기화)"""
+        try:
+            if os.path.exists(self.token_file):
+                os.remove(self.token_file)
+            self.creds = None
             return True
         except Exception as e:
-            print(f"[Google Auth Error] {e}")
+            print(f"[Google Disconnect Error] {e}")
             return False
 
     def get_or_create_folder(self, folder_name: str, parent_id: str = None) -> str:
@@ -141,14 +178,13 @@ class GoogleDriveService:
         return results.get('files', [])
 
     def list_all_backups(self) -> list:
-        """💡 [추가] HairMate 백업 파일 전체 목록 조회 (복원 선택용)"""
+        """HairMate 백업 파일 전체 목록 조회 (복원 뷰 바인딩용)"""
         if not self.is_authenticated():
             if not self.authenticate():
                 return []
 
         service = build('drive', 'v3', credentials=self.creds)
 
-        # HairMate 하위의 모든 암호화 백업 파일(.enc) 검색
         query = "name contains 'HairMate_Backup' and name contains '.enc' and trashed = false"
         results = service.files().list(
             q=query,
