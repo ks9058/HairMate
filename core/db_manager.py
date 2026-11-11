@@ -1353,3 +1353,73 @@ class DBManager:
             }
         finally:
             conn.close()
+
+    def get_customers_csv_data(self):
+            """고객 정보 및 동의 내역 CSV 내보내기용 데이터 조회"""
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute("""
+                    SELECT 
+                        c.id AS 고객번호,
+                        c.name AS 고객명,
+                        c.phone AS 전화번호,
+                        c.point AS 보유포인트,
+                        CASE WHEN c.is_consent = 1 THEN '동의' ELSE '미동의' END AS 필수동의여부,
+                        COALESCE(strftime('%Y-%m-%d %H:%M:%S', c.consent_at), '-') AS 필수동의일시,
+                        CASE WHEN c.is_marketing_consent = 1 THEN '동의' ELSE '미동의' END AS 마케팅동의여부,
+                        COALESCE(strftime('%Y-%m-%d %H:%M:%S', c.marketing_consent_at), '-') AS 마케팅동의일시,
+                        c.memo AS 특이사항메모,
+                        strftime('%Y-%m-%d %H:%M:%S', c.created_at) AS 최초등록일시
+                    FROM customer c
+                    WHERE c.is_active = 1
+                    ORDER BY c.id ASC
+                """)
+                return cursor.fetchall()
+            except Exception as e:
+                print(f"[DB Error] get_customers_csv_data: {e}")
+                return []
+            finally:
+                conn.close()
+
+    def get_sales_csv_data(self):
+        """매출 및 시술 결제 내역 CSV 내보내기용 데이터 조회"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT 
+                    v.id AS 방문번호,
+                    c.name AS 고객명,
+                    c.phone AS 전화번호,
+                    COALESCE(u.name, '-') AS 담당디자이너,
+                    v.total_amount AS 결제금액,
+                    v.used_point AS 사용포인트,
+                    v.total_duration_minutes AS 소요시간_분,
+                    COALESCE((
+                        SELECT GROUP_CONCAT(
+                            CASE 
+                                WHEN COALESCE(vs.quantity, 1) > 1 THEN s.name || ' (' || vs.quantity || '개)'
+                                ELSE s.name 
+                            END, ', ') 
+                        FROM visit_service vs 
+                        JOIN service s ON vs.service_id = s.id 
+                        WHERE vs.visit_id = v.id
+                    ), '-') AS 시술항목,
+                    COALESCE((
+                        SELECT GROUP_CONCAT(DISTINCT payment_method) 
+                        FROM payment 
+                        WHERE visit_id = v.id
+                    ), '-') AS 결제수단,
+                    strftime('%Y-%m-%d %H:%M:%S', v.visited_at) AS 방문결제일시
+                FROM visit v
+                JOIN customer c ON v.customer_id = c.id
+                LEFT JOIN user u ON v.user_id = u.id
+                ORDER BY v.id DESC
+            """)
+            return cursor.fetchall()
+        except Exception as e:
+            print(f"[DB Error] get_sales_csv_data: {e}")
+            return []
+        finally:
+            conn.close()
