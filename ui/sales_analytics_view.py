@@ -10,25 +10,33 @@ from ui.theme import Colors
 from core.db_manager import DBManager
 
 
-def get_arrow_icon_path() -> str:
-    """Qt QSS 호환용 꺾새(∨) 화살표 PNG 아이콘 동적 생성 및 경로 반환"""
-    icon_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(icon_dir, "combo_arrow.png")
-    
+def get_resource_arrow_path(direction: str = "down") -> str:
+    """프로젝트 루트의 resources 폴더에 깔끔한 화살표 PNG를 생성하고 절대 경로 반환"""
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    res_dir = os.path.join(project_root, "resources")
+    os.makedirs(res_dir, exist_ok=True)
+
+    file_path = os.path.join(res_dir, f"arrow_{direction}.png")
     if not os.path.exists(file_path):
-        pixmap = QPixmap(32, 32)
+        pixmap = QPixmap(24, 24)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
-        pen = QPen(QColor("#444444"), 3)
+        pen = QPen(QColor("#444444"), 2)
         pen.setCapStyle(Qt.RoundCap)
         pen.setJoinStyle(Qt.RoundJoin)
         painter.setPen(pen)
-        painter.drawLine(6, 12, 16, 22)
-        painter.drawLine(16, 22, 26, 12)
+
+        if direction == "down":
+            painter.drawLine(5, 9, 12, 16)
+            painter.drawLine(12, 16, 19, 9)
+        elif direction == "up":
+            painter.drawLine(5, 15, 12, 8)
+            painter.drawLine(12, 8, 19, 15)
+
         painter.end()
         pixmap.save(file_path, "PNG")
-        
+
     return file_path.replace("\\", "/")
 
 
@@ -163,6 +171,8 @@ class SalesAnalyticsView(QWidget):
         main_layout.setContentsMargins(25, 10, 25, 20)
         main_layout.setSpacing(10)
 
+        arrow_down_path = get_resource_arrow_path("down")
+
         # 1. 상단 타이틀 Header Frame
         self.header_frame = QFrame(self)
         self.header_frame.setFixedHeight(65)
@@ -197,7 +207,7 @@ class SalesAnalyticsView(QWidget):
         tab_btn_layout.addWidget(self.btn_tab_period, 1)
         main_layout.addLayout(tab_btn_layout)
 
-        # 3. Period Filter Bar
+        # 3. Period Filter Bar (회색 외곽 컨테이너)
         self.period_filter_bar = QFrame(self)
         self.period_filter_bar.setFixedHeight(54)
         self.period_filter_bar.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
@@ -207,33 +217,70 @@ class SalesAnalyticsView(QWidget):
         pf_layout.setContentsMargins(6, 6, 6, 6)
         pf_layout.setSpacing(10)
 
-        arrow_path = get_arrow_icon_path()
+        # 선택 영역 자체에만 들어가는 테두리 공통 스타일
+        unified_input_border = """
+            border: 1.5px solid #C0C0C0;
+            border-radius: 4px;
+            background-color: #FAFAFA;
+            color: #000000;
+        """
 
-        input_control_style = f"""
-            QComboBox, QDateEdit {{
+        # 콤보박스 스타일 (전체 디자이너 + 아래 화살표 포함 테두리)
+        bordered_combo_style = f"""
+            QComboBox {{
+                {unified_input_border}
+                padding-left: 8px;
+                padding-right: 22px;
+            }}
+            QComboBox:focus {{
+                border: 1.5px solid {Colors.PRIMARY};
                 background-color: #FFFFFF;
-                border: 1px solid #B0B0B0;
-                border-radius: 6px;
-                padding: 2px 28px 2px 10px;
-                color: #000000;
-                font-size: 10pt;
-                font-family: Inter, sans-serif;
             }}
-            QComboBox:hover, QDateEdit:hover {{
-                border: 1px solid #666666;
-            }}
-            QComboBox::drop-down, QDateEdit::drop-down {{
-                subcontrol-origin: padding;
+            QComboBox::drop-down {{
+                subcontrol-origin: border;
                 subcontrol-position: center right;
-                width: 24px;
+                width: 22px;
                 border: none;
                 background: transparent;
             }}
-            QComboBox::down-arrow, QDateEdit::down-arrow {{
-                image: url("{arrow_path}");
-                width: 12px;
-                height: 12px;
-                margin-right: 6px;
+            QComboBox::down-arrow {{
+                image: url("{arrow_down_path}");
+                width: 11px;
+                height: 11px;
+                margin-right: 4px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #FFFFFF;
+                color: #000000;
+                border: 1px solid #B0B0B0;
+                selection-background-color: #E8F5E9;
+                selection-color: #000000;
+            }}
+        """
+
+        # 날짜 입력창 스타일 (날짜 + 아래 화살표 포함 테두리)
+        bordered_date_style = f"""
+            QDateEdit {{
+                {unified_input_border}
+                padding-left: 6px;
+                padding-right: 20px;
+            }}
+            QDateEdit:focus {{
+                border: 1.5px solid {Colors.PRIMARY};
+                background-color: #FFFFFF;
+            }}
+            QDateEdit::drop-down {{
+                subcontrol-origin: border;
+                subcontrol-position: center right;
+                width: 20px;
+                border: none;
+                background: transparent;
+            }}
+            QDateEdit::down-arrow {{
+                image: url("{arrow_down_path}");
+                width: 10px;
+                height: 10px;
+                margin-right: 4px;
             }}
             QCalendarWidget QWidget#qt_calendar_navigationbar {{
                 background-color: {Colors.PRIMARY};
@@ -241,7 +288,7 @@ class SalesAnalyticsView(QWidget):
             }}
             QCalendarWidget QToolButton {{
                 color: #FFFFFF;
-                font-size: 10pt;
+                font-size: 13px;
                 font-weight: bold;
                 background-color: transparent;
                 border: none;
@@ -266,7 +313,7 @@ class SalesAnalyticsView(QWidget):
             QCalendarWidget QMenu {{
                 background-color: #FFFFFF;
                 color: #000000;
-                font-size: 9pt;
+                font-size: 12px;
                 border: 1px solid #B0B0B0;
             }}
             QCalendarWidget QMenu::item {{
@@ -282,7 +329,7 @@ class SalesAnalyticsView(QWidget):
                 color: #FFFFFF;
                 background-color: transparent;
                 font-weight: bold;
-                font-size: 10pt;
+                font-size: 13px;
                 selection-background-color: {Colors.PRIMARY_HOVER};
                 selection-color: #FFFFFF;
             }}
@@ -291,7 +338,7 @@ class SalesAnalyticsView(QWidget):
                 background-color: #FFFFFF;
                 selection-background-color: {Colors.PRIMARY};
                 selection-color: #FFFFFF;
-                font-size: 9pt;
+                font-size: 12px;
             }}
             QCalendarWidget QAbstractItemView::item:hover {{
                 background-color: #666666;
@@ -302,50 +349,50 @@ class SalesAnalyticsView(QWidget):
             }}
         """
 
-        # 3.1 디자이너 선택 카드 박스
+        # 3.1 디자이너 선택 영역 (바깥 흰색 배경 카드 내 배치)
         designer_box = QFrame(self.period_filter_bar)
         designer_box.setFixedHeight(42)
         designer_box.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
         designer_box.setAttribute(Qt.WA_StyledBackground, True)
 
         des_l = QHBoxLayout(designer_box)
-        des_l.setContentsMargins(12, 0, 12, 0)
+        des_l.setContentsMargins(12, 6, 12, 6)
         des_l.setSpacing(10)
 
         lbl_des_title = QLabel("디자이너 :", designer_box)
         lbl_des_title.setFont(QFont("Inter", 11, QFont.Weight.Bold))
-        lbl_des_title.setStyleSheet("background: transparent; color: #333333;")
+        lbl_des_title.setStyleSheet("background: transparent; border: none; color: #333333;")
 
         self.cb_designer = QComboBox(designer_box)
         self.cb_designer.setFixedHeight(30)
-        self.cb_designer.setFont(QFont("Inter", 11, QFont.Weight.Normal))
-        self.cb_designer.setStyleSheet(input_control_style)
+        self.cb_designer.setFont(QFont("Inter", 10))
+        self.cb_designer.setStyleSheet(bordered_combo_style)
         self.cb_designer.currentIndexChanged.connect(self.refresh_period_analysis)
 
         des_l.addWidget(lbl_des_title)
         des_l.addWidget(self.cb_designer, 1)
 
-        # 3.2 기간 선택 카드 박스
+        # 3.2 기간 선택 영역 (바깥 흰색 배경 카드 내 배치)
         date_box = QFrame(self.period_filter_bar)
         date_box.setFixedHeight(42)
         date_box.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
         date_box.setAttribute(Qt.WA_StyledBackground, True)
 
         date_l = QHBoxLayout(date_box)
-        date_l.setContentsMargins(12, 0, 12, 0)
+        date_l.setContentsMargins(12, 6, 12, 6)
         date_l.setSpacing(8)
 
         lbl_date_title = QLabel("조회기간 :", date_box)
         lbl_date_title.setFont(QFont("Inter", 11, QFont.Weight.Bold))
-        lbl_date_title.setStyleSheet("background: transparent; color: #333333;")
+        lbl_date_title.setStyleSheet("background: transparent; border: none; color: #333333;")
 
         self.date_start = QDateEdit(date_box)
-        self.date_start.setFixedHeight(30)
         self.date_start.setDisplayFormat("yyyy-MM-dd")
-        self.date_start.setFont(QFont("Inter", 11, QFont.Weight.Normal))
+        self.date_start.setFixedHeight(30)
+        self.date_start.setFont(QFont("Inter", 9))
         self.date_start.setCalendarPopup(True)
         self.date_start.setDate(QDate.currentDate().addDays(-30))
-        self.date_start.setStyleSheet(input_control_style)
+        self.date_start.setStyleSheet(bordered_date_style)
         if self.date_start.calendarWidget():
             self.date_start.calendarWidget().setNavigationBarVisible(True)
         self.date_start.dateChanged.connect(self.refresh_period_analysis)
@@ -353,15 +400,15 @@ class SalesAnalyticsView(QWidget):
         lbl_tilde = QLabel("~", date_box)
         lbl_tilde.setFont(QFont("Inter", 12, QFont.Weight.Bold))
         lbl_tilde.setAlignment(Qt.AlignCenter)
-        lbl_tilde.setStyleSheet("background: transparent; color: #333333;")
+        lbl_tilde.setStyleSheet("background: transparent; border: none; color: #333333;")
 
         self.date_end = QDateEdit(date_box)
-        self.date_end.setFixedHeight(30)
         self.date_end.setDisplayFormat("yyyy-MM-dd")
-        self.date_end.setFont(QFont("Inter", 11, QFont.Weight.Normal))
+        self.date_end.setFixedHeight(30)
+        self.date_end.setFont(QFont("Inter", 9))
         self.date_end.setCalendarPopup(True)
         self.date_end.setDate(QDate.currentDate())
-        self.date_end.setStyleSheet(input_control_style)
+        self.date_end.setStyleSheet(bordered_date_style)
         if self.date_end.calendarWidget():
             self.date_end.calendarWidget().setNavigationBarVisible(True)
         self.date_end.dateChanged.connect(self.refresh_period_analysis)
@@ -388,7 +435,7 @@ class SalesAnalyticsView(QWidget):
         pd_layout.setContentsMargins(0, 10, 0, 0)
         pd_layout.setSpacing(10)
 
-        # 1행: 4종 요약 KPI 카드 (총 매출액, 객 단 가, 방문자 수, 일평균 매출액)
+        # 1행: 4종 요약 KPI 카드
         box1_outer = QFrame(page_daily)
         box1_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         b1_layout = QHBoxLayout(box1_outer)
@@ -405,7 +452,7 @@ class SalesAnalyticsView(QWidget):
         b1_layout.addWidget(self.card_visitors, 1)
         b1_layout.addWidget(self.card_avg_sales, 1)
 
-        # 2행: 결제 수단별 금액 및 비율 카드 (카드, 현금, 포인트/선결제)
+        # 2행: 결제 수단별 금액 및 비율 카드
         box_pay_outer = QFrame(page_daily)
         box_pay_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         bpay_layout = QHBoxLayout(box_pay_outer)
@@ -701,7 +748,7 @@ class SalesAnalyticsView(QWidget):
     # 데이터 새로고침
     # -------------------------------------------------------------
     def refresh_daily_analysis(self):
-        """Issue 13: 금일 매출 분석 4종 KPI 카드, 결제 수단별 금액/비율 카드 및 동적 증감 막대 색상 반영"""
+        """금일 매출 분석 4종 KPI 카드, 결제 수단별 금액/비율 카드 및 동적 증감 막대 색상 반영"""
         data = self.db_manager.get_daily_sales_analysis()
 
         # 1. 상단 1행 4종 KPI 카드 값 갱신
@@ -788,7 +835,7 @@ class SalesAnalyticsView(QWidget):
                 self.top3_container.addWidget(item_w)
 
     def refresh_period_analysis(self):
-        """Issue 14: 기간별 상세분석 탭 데이터 바인딩"""
+        """기간별 상세분석 탭 데이터 바인딩"""
         start_date = self.date_start.date().toString("yyyy-MM-dd")
         end_date = self.date_end.date().toString("yyyy-MM-dd")
         designer_id = self.cb_designer.currentData()

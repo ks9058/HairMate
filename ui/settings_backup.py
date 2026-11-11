@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QFrame, QStackedWidget, QProgressBar, QMessageBox
+    QFrame, QStackedWidget, QProgressBar, QDialog
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QFont, QColor
@@ -10,6 +10,131 @@ from ui.theme import Colors
 from core.db_manager import DBManager
 from core.encryption_service import EncryptionService
 from core.google_drive_service import GoogleDriveService
+
+
+class CustomAlertDialog(QDialog):
+    """커스텀 단일 알림 팝업 모달"""
+    def __init__(self, title: str, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(380, 190)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(25, 25, 25, 20)
+        c_layout.setSpacing(16)
+
+        lbl_msg = QLabel(message, container)
+        lbl_msg.setFont(QFont("Inter", 12, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setWordWrap(True)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000; font-weight: bold;")
+        c_layout.addWidget(lbl_msg)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedHeight(40)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+        c_layout.addWidget(btn_confirm)
+
+        outer_layout.addWidget(container)
+
+
+class CustomConfirmDialog(QDialog):
+    """커스텀 확인/취소 선택 팝업 모달"""
+    def __init__(self, title: str, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(400, 220)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(25, 25, 25, 20)
+        c_layout.setSpacing(16)
+
+        lbl_msg = QLabel(message, container)
+        lbl_msg.setFont(QFont("Inter", 12, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setWordWrap(True)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000; font-weight: bold;")
+        c_layout.addWidget(lbl_msg)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedHeight(40)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: {Colors.PRIMARY};
+                border: 2px solid {Colors.PRIMARY};
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: #E8F5E9;
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+
+        btn_cancel = QPushButton("취소", container)
+        btn_cancel.setFixedHeight(40)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_cancel.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_cancel.clicked.connect(self.reject)
+
+        btn_layout.addWidget(btn_confirm, 1)
+        btn_layout.addWidget(btn_cancel, 1)
+        c_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
 
 
 class BackupWorker(QThread):
@@ -41,7 +166,6 @@ class BackupWorker(QThread):
             for f in existing_files:
                 f_name = f.get('name', '')
                 if f_name.startswith(prefix) and f_name.endswith('.enc'):
-                    # 'HairMate_Backup_20261111_' 와 '.enc' 사이의 숫자를 추출
                     num_part = f_name[len(prefix):-4]
                     if num_part.isdigit():
                         max_index = max(max_index, int(num_part))
@@ -75,7 +199,6 @@ class BackupWorker(QThread):
             self.finished_signal.emit(file_name, file_size_str, date_str_display)
 
         except Exception as e:
-            # 에러 발생 시 남아있는 임시 파일 정리
             if 'temp_enc_path' in locals() and os.path.exists(temp_enc_path):
                 try:
                     os.remove(temp_enc_path)
@@ -99,12 +222,9 @@ class SettingsBackupView(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # 3개 상태 페이지 관리를 위한 StackedWidget
         self.stack = QStackedWidget(self)
 
-        # -------------------------------------------------------------
         # State 0: 백업 대기 화면 (초기 상태)
-        # -------------------------------------------------------------
         page_ready = QWidget()
         l_ready = QVBoxLayout(page_ready)
         l_ready.setAlignment(Qt.AlignCenter)
@@ -144,9 +264,7 @@ class SettingsBackupView(QWidget):
 
         self.stack.addWidget(page_ready)
 
-        # -------------------------------------------------------------
         # State 1: 백업 진행 중 화면
-        # -------------------------------------------------------------
         page_progress = QWidget()
         l_prog = QVBoxLayout(page_progress)
         l_prog.setAlignment(Qt.AlignCenter)
@@ -162,7 +280,6 @@ class SettingsBackupView(QWidget):
         lbl_warning.setAlignment(Qt.AlignCenter)
         lbl_warning.setStyleSheet("color: #E53E3E;")
 
-        # 무한 로딩 인디케이터 바
         self.progress_bar = QProgressBar(page_progress)
         self.progress_bar.setFixedSize(280, 8)
         self.progress_bar.setRange(0, 0)
@@ -186,9 +303,7 @@ class SettingsBackupView(QWidget):
 
         self.stack.addWidget(page_progress)
 
-        # -------------------------------------------------------------
         # State 2: 백업 완료 화면
-        # -------------------------------------------------------------
         page_complete = QWidget()
         l_comp = QVBoxLayout(page_complete)
         l_comp.setAlignment(Qt.AlignCenter)
@@ -245,7 +360,6 @@ class SettingsBackupView(QWidget):
         self.stack.setCurrentIndex(0)
 
     def load_last_backup_date(self):
-        """DB 설정 테이블에서 최근 백업 일자 조회"""
         last_date = self.db_manager.get_setting("last_backup_date", default="")
         if last_date:
             self.lbl_last_backup.setText(f"최근 백업일 : {last_date}")
@@ -253,7 +367,15 @@ class SettingsBackupView(QWidget):
             self.lbl_last_backup.setText("최근 백업일 : 내역 없음")
 
     def start_backup(self):
-        """백업 시작 핸들러"""
+        """백업 시작 핸들러 (확인 모달 팝업 추가)"""
+        dialog = CustomConfirmDialog(
+            "데이터 백업 확인",
+            "현재 데이터를 구글 드라이브에 백업하시겠습니까?",
+            self
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+
         self.stack.setCurrentIndex(1)
 
         self.worker = BackupWorker()
@@ -262,7 +384,6 @@ class SettingsBackupView(QWidget):
         self.worker.start()
 
     def on_backup_success(self, file_name: str, file_size_str: str, date_str: str):
-        """백업 성공 시 정보 표시 및 DB 설정 갱신"""
         self.db_manager.set_setting("last_backup_date", date_str)
         self.load_last_backup_date()
 
@@ -272,10 +393,8 @@ class SettingsBackupView(QWidget):
         self.stack.setCurrentIndex(2)
 
     def on_backup_failed(self, error_msg: str):
-        """백업 실패 처리"""
         self.stack.setCurrentIndex(0)
-        QMessageBox.critical(self, "백업 실패", f"구글 드라이브 데이터 백업 중 오류가 발생했습니다:\n\n{error_msg}")
+        CustomAlertDialog("백업 실패", f"구글 드라이브 데이터 백업 중 오류가 발생했습니다:\n\n{error_msg}", self).exec()
 
     def finish_backup(self):
-        """완료 버튼 클릭 시 대기 화면으로 복귀"""
         self.stack.setCurrentIndex(0)

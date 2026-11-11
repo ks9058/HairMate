@@ -1,10 +1,135 @@
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QPushButton, QMessageBox, QProgressBar
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QDialog, QFrame
 )
 from PySide6.QtCore import Qt, Signal, QSize, QThread
 from PySide6.QtGui import QFont
 from ui.theme import Colors, Styles, get_icon
 from core.google_drive_service import GoogleDriveService
+
+
+class CustomAlertDialog(QDialog):
+    """커스텀 단일 알림 팝업 모달 (텍스트 굵게 수정)"""
+    def __init__(self, title: str, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(380, 190)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(25, 25, 25, 20)
+        c_layout.setSpacing(16)
+
+        lbl_msg = QLabel(message, container)
+        lbl_msg.setFont(QFont("Inter", 12, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setWordWrap(True)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000; font-weight: bold;")
+        c_layout.addWidget(lbl_msg)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedHeight(40)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+        c_layout.addWidget(btn_confirm)
+
+        outer_layout.addWidget(container)
+
+
+class CustomConfirmDialog(QDialog):
+    """커스텀 확인/취소 선택 팝업 모달 (텍스트 굵게 수정)"""
+    def __init__(self, title: str, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(400, 220)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(25, 25, 25, 20)
+        c_layout.setSpacing(16)
+
+        lbl_msg = QLabel(message, container)
+        lbl_msg.setFont(QFont("Inter", 12, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setWordWrap(True)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000; font-weight: bold;")
+        c_layout.addWidget(lbl_msg)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedHeight(40)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: {Colors.PRIMARY};
+                border: 2px solid {Colors.PRIMARY};
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: #E8F5E9;
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+
+        btn_cancel = QPushButton("취소", container)
+        btn_cancel.setFixedHeight(40)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_cancel.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_cancel.clicked.connect(self.reject)
+
+        btn_layout.addWidget(btn_confirm, 1)
+        btn_layout.addWidget(btn_cancel, 1)
+        c_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
 
 
 class AuthWorker(QThread):
@@ -37,14 +162,12 @@ class SettingsGoogleView(QWidget):
         self.layout.setAlignment(Qt.AlignCenter)
         self.layout.setSpacing(15)
 
-        # 상단 타이틀
         self.lbl_title = QLabel("구글 계정 인증", self)
         self.lbl_title.setFont(QFont("Inter", 22, QFont.Weight.Bold))
         self.lbl_title.setStyleSheet(f"color: {Colors.TEXT_MAIN};")
         self.lbl_title.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.lbl_title)
 
-        # 동적 컨텐트 컨테이너
         self.content_widget = QWidget(self)
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setAlignment(Qt.AlignCenter)
@@ -54,12 +177,10 @@ class SettingsGoogleView(QWidget):
         self.refresh_auth_status()
 
     def refresh_auth_status(self):
-        """현재 토큰 상태 확인 후 UI 재렌더링"""
         self.drive_service = GoogleDriveService()
         self.render_view()
 
     def render_view(self):
-        """인증 완료 / 미인증 상태 렌더링"""
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
             if item.widget():
@@ -68,7 +189,6 @@ class SettingsGoogleView(QWidget):
         is_auth = self.drive_service.is_authenticated()
 
         if is_auth:
-            # 1. 인증 완료 상태 UI
             acc_info = self.drive_service.get_account_info()
             last_date = self.drive_service.get_last_auth_date()
 
@@ -90,7 +210,6 @@ class SettingsGoogleView(QWidget):
             lbl_status.setAlignment(Qt.AlignCenter)
             self.content_layout.addWidget(lbl_status)
 
-            # 연동 해제 버튼
             btn_logout = QPushButton("구글 계정 연동 해제", self)
             btn_logout.setFixedSize(300, 45)
             btn_logout.setCursor(Qt.PointingHandCursor)
@@ -110,7 +229,6 @@ class SettingsGoogleView(QWidget):
             self.content_layout.addWidget(btn_logout, alignment=Qt.AlignCenter)
 
         else:
-            # 2. 미인증 상태 UI
             btn_login = QPushButton("     구글 계정 인증하기", self)
             btn_login.setFixedSize(300, 45)
             btn_login.setCursor(Qt.PointingHandCursor)
@@ -127,7 +245,6 @@ class SettingsGoogleView(QWidget):
             self.content_layout.addWidget(lbl_warn)
 
     def on_auth_click(self):
-        """인증 버튼 클릭 핸들러"""
         self.worker = AuthWorker()
         self.worker.finished_signal.connect(self.on_auth_finished)
         self.worker.start()
@@ -136,20 +253,17 @@ class SettingsGoogleView(QWidget):
         if success:
             self.refresh_auth_status()
             self.auth_requested.emit()
-            QMessageBox.information(self, "인증 성공", "구글 계정 연동이 완료되었습니다.")
+            CustomAlertDialog("인증 성공", "구글 계정 연동이 완료되었습니다.", self).exec()
         else:
-            QMessageBox.critical(self, "인증 실패", f"구글 계정 연동 실패:\n\n{msg}")
+            CustomAlertDialog("인증 실패", f"구글 계정 연동 실패:\n\n{msg}", self).exec()
 
     def on_disconnect_click(self):
-        """연동 해제 버튼 클릭 핸들러"""
-        reply = QMessageBox.question(
-            self,
+        dialog = CustomConfirmDialog(
             "계정 연동 해제",
-            "구글 계정 연동을 해제하시겠습니까?\n해제 시 클라우드 백업 및 복원 기능을 이용할 수 없습니다.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            "구글 계정 연동을 해제하시겠습니까?<br>해제 시 클라우드 백업 및 복원 기능을 이용할 수 없습니다.",
+            self
         )
-        if reply == QMessageBox.Yes:
+        if dialog.exec() == QDialog.Accepted:
             if self.drive_service.disconnect():
                 self.refresh_auth_status()
-                QMessageBox.information(self, "해제 완료", "구글 계정 연동이 성공적으로 해제되었습니다.")
+                CustomAlertDialog("해제 완료", "구글 계정 연동이 성공적으로 해제되었습니다.", self).exec()

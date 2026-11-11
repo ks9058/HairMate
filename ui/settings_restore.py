@@ -3,21 +3,227 @@ import shutil
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QFrame, QStackedWidget, QProgressBar, QMessageBox,
+    QFrame, QStackedWidget, QProgressBar, QDialog,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 )
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QTextDocument
 from ui.theme import Colors
 from core.db_manager import DBManager
 from core.encryption_service import EncryptionService
 from core.google_drive_service import GoogleDriveService
 
 
+SCROLLBAR_STYLE = """
+    QScrollBar:vertical {
+        border: none;
+        background: #EAEAEA;
+        width: 10px;
+        margin: 0px;
+        border-radius: 5px;
+    }
+    QScrollBar::handle:vertical {
+        background: #B0B0B0;
+        min-height: 25px;
+        border-radius: 5px;
+    }
+    QScrollBar::handle:vertical:hover {
+        background: #888888;
+    }
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+        background: none;
+        height: 0px;
+    }
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+        background: none;
+    }
+"""
+
+
+class CustomAlertDialog(QDialog):
+    """커스텀 단일 알림 팝업 모달 (텍스트 굵게 수정)"""
+    def __init__(self, title: str, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(380, 190)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(25, 25, 25, 20)
+        c_layout.setSpacing(16)
+
+        lbl_msg = QLabel(message, container)
+        lbl_msg.setFont(QFont("Inter", 12, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setWordWrap(True)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000; font-weight: bold;")
+        c_layout.addWidget(lbl_msg)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedHeight(40)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+        c_layout.addWidget(btn_confirm)
+
+        outer_layout.addWidget(container)
+
+
+class CustomConfirmDialog(QDialog):
+    """커스텀 확인/취소 선택 팝업 모달 (텍스트 굵게 수정)"""
+    def __init__(self, title: str, message: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(400, 230)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(25, 25, 25, 20)
+        c_layout.setSpacing(16)
+
+        lbl_msg = QLabel(message, container)
+        lbl_msg.setFont(QFont("Inter", 12, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setWordWrap(True)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000; font-weight: bold;")
+        c_layout.addWidget(lbl_msg)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        btn_confirm = QPushButton("확인", container)
+        btn_confirm.setFixedHeight(40)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: {Colors.PRIMARY};
+                border: 2px solid {Colors.PRIMARY};
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: #E8F5E9;
+            }}
+        """)
+        btn_confirm.clicked.connect(self.accept)
+
+        btn_cancel = QPushButton("취소", container)
+        btn_cancel.setFixedHeight(40)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_cancel.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_cancel.clicked.connect(self.reject)
+
+        btn_layout.addWidget(btn_confirm, 1)
+        btn_layout.addWidget(btn_cancel, 1)
+        c_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
+
+
+class RoundedHeader(QHeaderView):
+    """상단 양쪽 모서리 라운드 적용 및 세로 구분선 제거 커스텀 헤더 뷰"""
+
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self.setDefaultAlignment(Qt.AlignCenter)
+
+    def paintSection(self, painter, rect, logicalIndex):
+        painter.save()
+
+        r = 8.0
+        x, y, w, h = float(rect.x()), float(rect.y()), float(rect.width()), float(rect.height())
+        count = self.count()
+
+        path = QPainterPath()
+        if count == 1:
+            path.moveTo(x + r, y)
+            path.lineTo(x + w - r, y)
+            path.quadTo(x + w, y, x + w, y + r)
+            path.lineTo(x + w, y + h)
+            path.lineTo(x, y + h)
+            path.lineTo(x, y + r)
+            path.quadTo(x, y, x + r, y)
+        elif logicalIndex == 0:
+            path.moveTo(x + r, y)
+            path.lineTo(x + w, y)
+            path.lineTo(x + w, y + h)
+            path.lineTo(x, y + h)
+            path.lineTo(x, y + r)
+            path.quadTo(x, y, x + r, y)
+        elif logicalIndex == count - 1:
+            path.moveTo(x, y)
+            path.lineTo(x + w - r, y)
+            path.quadTo(x + w, y, x + w, y + r)
+            path.lineTo(x + w, y + h)
+            path.lineTo(x, y + h)
+            path.closeSubpath()
+        else:
+            path.addRect(rect)
+
+        painter.fillPath(path, QColor(Colors.PRIMARY))
+
+        text = self.model().headerData(logicalIndex, self.orientation(), Qt.DisplayRole)
+        if text:
+            doc = QTextDocument()
+            doc.setHtml(f"<div style='color: #FFFFFF; font-weight: bold; font-size: 13px; text-align: center;'>{text}</div>")
+            doc.setTextWidth(rect.width())
+
+            y_offset = (rect.height() - doc.size().height()) / 2
+            painter.translate(rect.x(), rect.y() + y_offset)
+            doc.drawContents(painter)
+
+        painter.restore()
+
+
 class RestoreWorker(QThread):
     """구글 드라이브 백업 파일 다운로드 및 DB 복호화 교체 비동기 스레드"""
-    finished_signal = Signal(str)  # (restored_file_name)
-    failed_signal = Signal(str)    # (error_message)
+    finished_signal = Signal(str)
+    failed_signal = Signal(str)
 
     def __init__(self, file_id: str, file_name: str, parent=None):
         super().__init__(parent)
@@ -34,17 +240,14 @@ class RestoreWorker(QThread):
             drive_service = GoogleDriveService()
             enc_service = EncryptionService()
 
-            # 1. 구글 드라이브에서 임시 암호화 백업 파일(.enc) 다운로드
             if not drive_service.download_backup(self.file_id, temp_enc_path):
                 self.failed_signal.emit("구글 드라이브에서 백업 파일 다운로드에 실패했습니다.")
                 return
 
-            # 2. 임시 파일 복호화 (AES / Fernet)
             if not enc_service.decrypt_db(temp_enc_path, temp_dec_path):
                 self.failed_signal.emit("백업 파일 복호화에 실패했습니다. 암호화 키를 확인하세요.")
                 return
 
-            # 3. 안전한 DB 교체 트랜잭션
             if os.path.exists(db_path):
                 shutil.copy2(db_path, backup_db_path)
 
@@ -90,15 +293,11 @@ class SettingsRestoreView(QWidget):
 
         self.stack = QStackedWidget(self)
 
-        # -------------------------------------------------------------
-        # State 0: 백업 파일 선택 복원 화면
-        # -------------------------------------------------------------
         page_select = QWidget()
         l_select = QVBoxLayout(page_select)
         l_select.setContentsMargins(40, 30, 40, 30)
         l_select.setSpacing(20)
 
-        # 헤더 타이틀 및 설명
         header_box = QVBoxLayout()
         lbl_title = QLabel("데이터 복원하기", page_select)
         lbl_title.setFont(QFont("Inter", 22, QFont.Weight.Bold))
@@ -112,10 +311,19 @@ class SettingsRestoreView(QWidget):
         header_box.addWidget(lbl_sub)
         l_select.addLayout(header_box)
 
-        # -------------------------------------------------------------
-        # 백업 파일 목록 테이블
-        # -------------------------------------------------------------
-        self.table = QTableWidget(page_select)
+        table_container = QFrame(page_select)
+        table_container.setStyleSheet("background-color: #FFFFFF; border-radius: 10px;")
+        table_container.setAttribute(Qt.WA_StyledBackground, True)
+
+        t_layout = QVBoxLayout(table_container)
+        t_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.table = QTableWidget(table_container)
+        
+        custom_header = RoundedHeader(Qt.Horizontal, self.table)
+        custom_header.setFixedHeight(42)
+        self.table.setHorizontalHeader(custom_header)
+
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["번호", "백업 파일명", "파일 크기", "생성 일시"])
         
@@ -124,47 +332,27 @@ class SettingsRestoreView(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
         
-        self.table.setColumnWidth(0, 70)   # 번호 컬럼
-        self.table.setColumnWidth(2, 120)  # 파일 크기
-        self.table.setColumnWidth(3, 180)  # 생성 일시
+        self.table.setColumnWidth(0, 70)
+        self.table.setColumnWidth(2, 120)
+        self.table.setColumnWidth(3, 180)
 
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
+        self.table.setFocusPolicy(Qt.NoFocus)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
-        # 헤더 높이 및 행 기본 높이 설정
-        self.table.horizontalHeader().setFixedHeight(42)
         self.table.verticalHeader().setDefaultSectionSize(40)
 
-        # 💡 헤더 라운드와 세로선 제거를 위한 개선된 스타일시트
         self.table.setStyleSheet(f"""
             QTableWidget {{
                 background-color: #FFFFFF;
                 border: 1px solid #D0D0D0;
                 border-radius: 10px;
                 outline: none;
-            }}
-            QHeaderView {{
-                background-color: {Colors.PRIMARY};
-                border-top-left-radius: 9px;
-                border-top-right-radius: 9px;
-                border: none;
-            }}
-            QHeaderView::section {{
-                background-color: transparent;
-                color: #FFFFFF;
-                font-weight: bold;
-                font-size: 13px;
-                border: none;
-                padding: 4px;
-            }}
-            QHeaderView::section:first {{
-                border-top-left-radius: 9px;
-            }}
-            QHeaderView::section:last {{
-                border-top-right-radius: 9px;
             }}
             QTableWidget::item {{
                 color: #333333;
@@ -180,9 +368,12 @@ class SettingsRestoreView(QWidget):
                 font-weight: bold;
             }}
         """)
-        l_select.addWidget(self.table, 1)
+        
+        self.table.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
 
-        # 하단 버튼 패널
+        t_layout.addWidget(self.table)
+        l_select.addWidget(table_container, 1)
+
         btn_layout = QHBoxLayout()
         self.btn_refresh = QPushButton("목록 새로고침", page_select)
         self.btn_refresh.setFixedSize(140, 46)
@@ -225,9 +416,6 @@ class SettingsRestoreView(QWidget):
 
         self.stack.addWidget(page_select)
 
-        # -------------------------------------------------------------
-        # State 1: 복원 진행 중 화면
-        # -------------------------------------------------------------
         page_progress = QWidget()
         l_prog = QVBoxLayout(page_progress)
         l_prog.setAlignment(Qt.AlignCenter)
@@ -266,9 +454,6 @@ class SettingsRestoreView(QWidget):
 
         self.stack.addWidget(page_progress)
 
-        # -------------------------------------------------------------
-        # State 2: 복원 완료 화면
-        # -------------------------------------------------------------
         page_complete = QWidget()
         l_comp = QVBoxLayout(page_complete)
         l_comp.setAlignment(Qt.AlignCenter)
@@ -318,7 +503,6 @@ class SettingsRestoreView(QWidget):
         self.stack.setCurrentIndex(0)
 
     def load_backup_list(self):
-        """구글 드라이브 내 백업 파일 목록을 조회하여 최신 순 번호(역순)와 함께 바인딩"""
         self.table.setRowCount(0)
         self.backup_files_data = self.drive_service.list_all_backups()
 
@@ -363,10 +547,9 @@ class SettingsRestoreView(QWidget):
             self.table.setItem(row, 3, item_created)
 
     def start_restore(self):
-        """선택한 백업 파일로 데이터 복원 시작"""
         selected_rows = self.table.selectionModel().selectedRows()
         if not selected_rows:
-            QMessageBox.warning(self, "백업 미선택", "복원할 백업 파일을 목록에서 선택해 주세요.")
+            CustomAlertDialog("백업 미선택", "복원할 백업 파일을 목록에서 선택해 주세요.", self).exec()
             return
 
         row = selected_rows[0].row()
@@ -374,16 +557,13 @@ class SettingsRestoreView(QWidget):
         file_id = file_info['id']
         file_name = file_info['name']
 
-        reply = QMessageBox.question(
-            self, 
-            "데이터 복원 확인", 
-            f"선택한 백업 [{file_name}] 파일로 데이터베이스를 복원하시겠습니까?\n\n"
-            "⚠️ 주의: 복원 진행 시 현재 작성된 최신 데이터는 덮어씌워집니다.",
-            QMessageBox.Yes | QMessageBox.No, 
-            QMessageBox.No
+        msg_html = (
+            f"선택한 백업 <b>[{file_name}]</b> 파일로 데이터베이스를 복원하시겠습니까?<br><br>"
+            f"<font color='#E53E3E'><b>⚠️ 주의:</b> 복원 진행 시 현재 작성된 최신 데이터는 덮어씌워집니다.</font>"
         )
 
-        if reply != QMessageBox.Yes:
+        dialog = CustomConfirmDialog("데이터 복원 확인", msg_html, self)
+        if dialog.exec() != QDialog.Accepted:
             return
 
         self.stack.setCurrentIndex(1)
@@ -399,7 +579,7 @@ class SettingsRestoreView(QWidget):
 
     def on_restore_failed(self, error_msg: str):
         self.stack.setCurrentIndex(0)
-        QMessageBox.critical(self, "복원 실패", f"데이터 복원 중 오류가 발생했습니다:\n\n{error_msg}")
+        CustomAlertDialog("복원 실패", f"데이터 복원 중 오류가 발생했습니다:\n\n{error_msg}", self).exec()
 
     def finish_restore(self):
         self.stack.setCurrentIndex(0)

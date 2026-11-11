@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QTextEdit,
@@ -7,9 +8,39 @@ from PySide6.QtWidgets import (
     QSpinBox
 )
 from PySide6.QtCore import Qt, QDate, Signal
-from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QTextDocument
+from PySide6.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QTextDocument, QPixmap
 from ui.theme import Colors, get_icon
 from core.db_manager import DBManager
+
+
+def get_resource_arrow_path(direction: str = "down") -> str:
+    """프로젝트 루트의 resources 폴더에 깔끔한 화살표 PNG를 생성하고 절대 경로 반환"""
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    res_dir = os.path.join(project_root, "resources")
+    os.makedirs(res_dir, exist_ok=True)
+
+    file_path = os.path.join(res_dir, f"arrow_{direction}.png")
+    if not os.path.exists(file_path):
+        pixmap = QPixmap(24, 24)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor("#444444"), 2)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+
+        if direction == "down":
+            painter.drawLine(5, 9, 12, 16)
+            painter.drawLine(12, 16, 19, 9)
+        elif direction == "up":
+            painter.drawLine(5, 15, 12, 8)
+            painter.drawLine(12, 8, 19, 15)
+
+        painter.end()
+        pixmap.save(file_path, "PNG")
+
+    return file_path.replace("\\", "/")
 
 
 SCROLLBAR_STYLE = """
@@ -535,88 +566,259 @@ class SalesRegistrationView(QWidget):
 
         # 1. 상단 옵션 바
         ctrl_frame = QFrame(left_sales_panel)
-        ctrl_frame.setFixedHeight(58)
+        ctrl_frame.setFixedHeight(64)
         ctrl_frame.setStyleSheet("background-color: #FFFFFF; border: 1px solid #DCDCDC; border-radius: 6px;")
         ctrl_layout = QHBoxLayout(ctrl_frame)
-        ctrl_layout.setContentsMargins(10, 6, 10, 6)
+        ctrl_layout.setContentsMargins(12, 6, 12, 6)
         ctrl_layout.setSpacing(8)
 
-        unified_input_style = """
+        arrow_down_path = get_resource_arrow_path("down")
+        arrow_up_path = get_resource_arrow_path("up")
+
+        unified_input_border = """
             border: 1.5px solid #C0C0C0;
             border-radius: 4px;
             background-color: #FAFAFA;
             color: #000000;
-            padding: 2px 4px;
         """
 
-        v_designer = QVBoxLayout()
+        # 1-1. 담당 디자이너 (4 비율)
+        widget_designer = QWidget(ctrl_frame)
+        widget_designer.setStyleSheet("background: transparent; border: none;")
+        widget_designer.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        widget_designer.setMinimumWidth(0)
+
+        v_designer = QVBoxLayout(widget_designer)
+        v_designer.setContentsMargins(0, 0, 0, 0)
         v_designer.setSpacing(2)
-        lbl_d = QLabel("담당 디자이너", ctrl_frame)
+
+        lbl_d = QLabel("담당 디자이너", widget_designer)
         lbl_d.setFont(QFont("Inter", 9, QFont.Bold))
         lbl_d.setStyleSheet("color: #666666; border: none; background: transparent;")
-        self.cb_designer = QComboBox(ctrl_frame)
-        self.cb_designer.setFixedHeight(26)
+
+        self.cb_designer = QComboBox(widget_designer)
+        self.cb_designer.setFixedHeight(30)
         self.cb_designer.setFont(QFont("Inter", 10))
+        self.cb_designer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.cb_designer.setMinimumWidth(0)
         self.cb_designer.setStyleSheet(f"""
             QComboBox {{
-                {unified_input_style}
+                {unified_input_border}
+                padding-left: 6px;
+                padding-right: 20px;
             }}
             QComboBox:focus {{
-                border: 1.5px solid #0D705C;
+                border: 1.5px solid {Colors.PRIMARY};
                 background-color: #FFFFFF;
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: border;
+                subcontrol-position: center right;
+                width: 20px;
+                border: none;
+                background: transparent;
+            }}
+            QComboBox::down-arrow {{
+                image: url("{arrow_down_path}");
+                width: 11px;
+                height: 11px;
+                margin-right: 4px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #FFFFFF;
+                color: #000000;
+                border: 1px solid #B0B0B0;
+                selection-background-color: #E8F5E9;
+                selection-color: #000000;
             }}
         """)
         v_designer.addWidget(lbl_d)
         v_designer.addWidget(self.cb_designer)
 
-        v_date = QVBoxLayout()
+        # 1-2. 결제일 (3 비율)
+        widget_date = QWidget(ctrl_frame)
+        widget_date.setStyleSheet("background: transparent; border: none;")
+        widget_date.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        widget_date.setMinimumWidth(0)
+
+        v_date = QVBoxLayout(widget_date)
+        v_date.setContentsMargins(0, 0, 0, 0)
         v_date.setSpacing(2)
-        lbl_dt = QLabel("결제일", ctrl_frame)
+
+        lbl_dt = QLabel("결제일", widget_date)
         lbl_dt.setFont(QFont("Inter", 9, QFont.Bold))
         lbl_dt.setStyleSheet("color: #666666; border: none; background: transparent;")
-        self.date_visit = QDateEdit(ctrl_frame)
+
+        self.date_visit = QDateEdit(widget_date)
         self.date_visit.setDate(QDate.currentDate())
-        self.date_visit.setFixedHeight(26)
-        self.date_visit.setFont(QFont("Inter", 10))
+        self.date_visit.setDisplayFormat("yyyy-MM-dd")
+        self.date_visit.setFixedHeight(30)
+        self.date_visit.setFont(QFont("Inter", 9))
+        self.date_visit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.date_visit.setMinimumWidth(0)
+        self.date_visit.setCalendarPopup(True)
+
+        cal = self.date_visit.calendarWidget()
+        if cal:
+            cal.setNavigationBarVisible(True)
+
         self.date_visit.setStyleSheet(f"""
             QDateEdit {{
-                {unified_input_style}
+                {unified_input_border}
+                padding-left: 4px;
+                padding-right: 18px;
             }}
             QDateEdit:focus {{
-                border: 1.5px solid #0D705C;
+                border: 1.5px solid {Colors.PRIMARY};
+                background-color: #FFFFFF;
+            }}
+            QDateEdit::drop-down {{
+                subcontrol-origin: border;
+                subcontrol-position: center right;
+                width: 18px;
+                border: none;
+                background: transparent;
+            }}
+            QDateEdit::down-arrow {{
+                image: url("{arrow_down_path}");
+                width: 10px;
+                height: 10px;
+                margin-right: 3px;
+            }}
+            QCalendarWidget QWidget#qt_calendar_navigationbar {{
+                background-color: {Colors.PRIMARY};
+                min-height: 40px;
+            }}
+            QCalendarWidget QToolButton {{
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: bold;
+                background-color: transparent;
+                border: none;
+                margin: 2px;
+                padding: 4px 6px;
+            }}
+            QCalendarWidget QToolButton#qt_calendar_monthbutton,
+            QCalendarWidget QToolButton#qt_calendar_yearbutton {{
+                padding-right: 18px;
+            }}
+            QCalendarWidget QToolButton#qt_calendar_monthbutton::menu-indicator,
+            QCalendarWidget QToolButton#qt_calendar_yearbutton::menu-indicator {{
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                right: 4px;
+                top: 0px;
+            }}
+            QCalendarWidget QToolButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+                border-radius: 4px;
+            }}
+            QCalendarWidget QMenu {{
+                background-color: #FFFFFF;
+                color: #000000;
+                font-size: 12px;
+                border: 1px solid #B0B0B0;
+            }}
+            QCalendarWidget QMenu::item {{
+                padding: 6px 20px;
+                color: #000000;
+            }}
+            QCalendarWidget QMenu::item:selected {{
+                background-color: #555555;
+                color: #FFFFFF;
+                font-weight: bold;
+            }}
+            QCalendarWidget QSpinBox {{
+                color: #FFFFFF;
+                background-color: transparent;
+                font-weight: bold;
+                font-size: 13px;
+                selection-background-color: {Colors.PRIMARY_HOVER};
+                selection-color: #FFFFFF;
+            }}
+            QCalendarWidget QAbstractItemView:enabled {{
+                color: #000000;
+                background-color: #FFFFFF;
+                selection-background-color: {Colors.PRIMARY};
+                selection-color: #FFFFFF;
+                font-size: 12px;
+            }}
+            QCalendarWidget QAbstractItemView::item:hover {{
+                background-color: #666666;
+                color: #FFFFFF;
+            }}
+            QCalendarWidget QWidget#qt_calendar_calendarview {{
                 background-color: #FFFFFF;
             }}
         """)
         v_date.addWidget(lbl_dt)
         v_date.addWidget(self.date_visit)
 
-        v_dur = QVBoxLayout()
+        # 1-3. 시술 시간 (3 비율)
+        widget_dur = QWidget(ctrl_frame)
+        widget_dur.setStyleSheet("background: transparent; border: none;")
+        widget_dur.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        widget_dur.setMinimumWidth(0)
+
+        v_dur = QVBoxLayout(widget_dur)
+        v_dur.setContentsMargins(0, 0, 0, 0)
         v_dur.setSpacing(2)
-        lbl_dur = QLabel("시술 시간", ctrl_frame)
+
+        lbl_dur = QLabel("시술 시간", widget_dur)
         lbl_dur.setFont(QFont("Inter", 9, QFont.Bold))
         lbl_dur.setStyleSheet("color: #666666; border: none; background: transparent;")
 
         h_dur_box = QHBoxLayout()
+        h_dur_box.setContentsMargins(0, 0, 0, 0)
         h_dur_box.setSpacing(4)
-        
-        self.spn_duration = QSpinBox(ctrl_frame)
+
+        self.spn_duration = QSpinBox(widget_dur)
         self.spn_duration.setRange(0, 1440)
         self.spn_duration.setSingleStep(30)
         self.spn_duration.setValue(30)
-        self.spn_duration.setFixedHeight(26)
         self.spn_duration.setAlignment(Qt.AlignCenter)
+        self.spn_duration.setFixedHeight(30)
         self.spn_duration.setFont(QFont("Inter", 10, QFont.Bold))
+        self.spn_duration.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.spn_duration.setMinimumWidth(0)
         self.spn_duration.setStyleSheet(f"""
             QSpinBox {{
-                {unified_input_style}
+                {unified_input_border}
+                padding-right: 18px;
             }}
             QSpinBox:focus {{
-                border: 1.5px solid #0D705C;
+                border: 1.5px solid {Colors.PRIMARY};
                 background-color: #FFFFFF;
             }}
+            QSpinBox::up-button {{
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+                width: 18px;
+                height: 14px;
+                border: none;
+                background: transparent;
+            }}
+            QSpinBox::up-arrow {{
+                image: url("{arrow_up_path}");
+                width: 10px;
+                height: 10px;
+            }}
+            QSpinBox::down-button {{
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+                width: 18px;
+                height: 14px;
+                border: none;
+                background: transparent;
+            }}
+            QSpinBox::down-arrow {{
+                image: url("{arrow_down_path}");
+                width: 10px;
+                height: 10px;
+            }}
         """)
-        
-        lbl_min_unit = QLabel("분", ctrl_frame)
+
+        lbl_min_unit = QLabel("분", widget_dur)
         lbl_min_unit.setFont(QFont("Inter", 10, QFont.Bold))
         lbl_min_unit.setStyleSheet("color: #333333; border: none; background: transparent;")
 
@@ -626,9 +828,9 @@ class SalesRegistrationView(QWidget):
         v_dur.addWidget(lbl_dur)
         v_dur.addLayout(h_dur_box)
 
-        ctrl_layout.addLayout(v_designer, 4)
-        ctrl_layout.addLayout(v_date, 4)
-        ctrl_layout.addLayout(v_dur, 3)
+        ctrl_layout.addWidget(widget_designer, 4)
+        ctrl_layout.addWidget(widget_date, 3)
+        ctrl_layout.addWidget(widget_dur, 3)
         left_s_layout.addWidget(ctrl_frame)
 
         # 2. 통합 결제 정보 카드
@@ -744,7 +946,7 @@ class SalesRegistrationView(QWidget):
 
         left_s_layout.addLayout(pay_btn_layout)
 
-        # 4. 고객 정보 박스 (고객번호 항목 제거)
+        # 4. 고객 정보 박스
         cust_info_outer = QFrame(left_sales_panel)
         cust_info_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         cust_info_outer.setAttribute(Qt.WA_StyledBackground, True)
@@ -892,6 +1094,7 @@ class SalesRegistrationView(QWidget):
         self.cart_table.setColumnCount(5)
         self.cart_table.setHorizontalHeaderLabels(["메뉴명", "단가*", "수량*", "금액", "증감"])
         self.cart_table.verticalHeader().setVisible(False)
+        self.cart_table.setDefaultDropAction(Qt.IgnoreAction)
         self.cart_table.verticalHeader().setDefaultSectionSize(40)
         self.cart_table.setShowGrid(False)
         self.cart_table.setFocusPolicy(Qt.NoFocus)
@@ -1066,7 +1269,8 @@ class SalesRegistrationView(QWidget):
 
             self.cust_table.insertRow(row_count)
 
-            item_no = QTableWidgetItem(str(row_count + 1))
+            # 1, 2, 3 대신 DB 고유 고객번호(cust["id"])를 표시
+            item_no = QTableWidgetItem(str(cust["id"]))
             item_no.setTextAlignment(Qt.AlignCenter)
             item_no.setData(Qt.UserRole, cust["id"])
             self.cust_table.setItem(row_count, 0, item_no)
@@ -1148,7 +1352,6 @@ class SalesRegistrationView(QWidget):
         self.render_service_grid(category_name)
 
     def render_service_grid(self, category_name: str):
-        """시술 메뉴 그리드 생성"""
         while self.service_grid_layout.count():
             item = self.service_grid_layout.takeAt(0)
             if item.widget():
@@ -1232,7 +1435,7 @@ class SalesRegistrationView(QWidget):
         self.recalculate_payment_status()
 
     # -------------------------------------------------------------
-    # 항목별 (일반 vs 선결제) 차등 적립 포인트 연산 (원금 + 보너스)
+    # 항목별 차등 적립 포인트 연산
     # -------------------------------------------------------------
     def calculate_expected_earned_points(self, current_cash_card_pay: int = 0) -> int:
         gen_rate, prep_rate = self.get_point_rates()
@@ -1445,7 +1648,6 @@ class SalesRegistrationView(QWidget):
             current_time_str = datetime.now().strftime("%H:%M:%S")
             visited_at_str = f"{selected_date} {current_time_str}"
 
-            # DB에 방문, 시술내역, 결제이력, 포인트내역 통합 저장
             save_success = self.db_manager.record_sale(
                 customer_id=cust_id,
                 user_id=designer_id,
@@ -1477,7 +1679,6 @@ class SalesRegistrationView(QWidget):
 
             CustomAlertDialog("결제 완료", msg, self).exec()
             
-            # 결제 완료 후 목록 새로고침 (최근 방문일자 갱신 반영)
             self.load_customer_list()
             self.clear_customer_selection()
         else:
