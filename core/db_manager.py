@@ -449,28 +449,39 @@ class DBManager:
             conn.close()
 
     def delete_customer(self, customer_id: int) -> bool:
-        """고객 논리적 삭제 (is_active = 0)"""
-        try:
-            customer_id = int(customer_id)
-        except (TypeError, ValueError):
-            return False
+            """고객 삭제 처리 (개인정보보호법 준수를 위한 식별정보 익명화 및 매출 데이터 보존)"""
+            try:
+                customer_id = int(customer_id)
+            except (TypeError, ValueError):
+                return False
 
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("""
-                UPDATE customer
-                SET is_active = 0, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (customer_id,))
-            conn.commit()
-            return True
-        except Exception as e:
-            conn.rollback()
-            print(f"[DB Error] delete_customer: {e}")
-            return False
-        finally:
-            conn.close()
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            try:
+                # 1. 개인식별정보(이름, 전화번호, 메모, 동의일시, 포인트) 익명화 및 파기
+                # 2. UNIQUE(phone) 제약조건 충돌 방지를 위해 고객 ID 기반 고유 가상번호 부여
+                cursor.execute("""
+                    UPDATE customer
+                    SET is_active = 0,
+                        name = '(삭제된 고객)',
+                        phone = '000-0000-' || printf('%04d', id),
+                        memo = '',
+                        point = 0,
+                        is_consent = 0,
+                        consent_at = NULL,
+                        is_marketing_consent = 0,
+                        marketing_consent_at = NULL,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (customer_id,))
+                conn.commit()
+                return True
+            except Exception as e:
+                conn.rollback()
+                print(f"[DB Error] delete_customer: {e}")
+                return False
+            finally:
+                conn.close()
 
     # -------------------------------------------------------------
     # 매출 데이터 저장 및 방문 통계 헬퍼
@@ -994,22 +1005,32 @@ class DBManager:
             conn.close()
 
     def delete_designer(self, user_id: int) -> bool:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("""
-                UPDATE user 
-                SET is_active = 0, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (user_id,))
-            conn.commit()
-            return True
-        except Exception as e:
-            conn.rollback()
-            print(f"[DB Error] delete_designer: {e}")
-            return False
-        finally:
-            conn.close()
+            """직원 삭제 처리 (과거 매출 통계 보존 + 개인 연락처 익명화)"""
+            try:
+                user_id = int(user_id)
+            except (TypeError, ValueError):
+                return False
+
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            try:
+                # 이름은 변경하지 않고 position을 '퇴사'로 변경 (조회 시 '이름 (퇴사)'로 자동 포맷팅됨)
+                cursor.execute("""
+                    UPDATE user 
+                    SET is_active = 0,
+                        phone = '',
+                        position = '퇴사',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND is_active = 1
+                """, (user_id,))
+                conn.commit()
+                return True
+            except Exception as e:
+                conn.rollback()
+                print(f"[DB Error] delete_designer: {e}")
+                return False
+            finally:
+                conn.close()
 
     # -------------------------------------------------------------
     # 매출 통계 분석 헬퍼 메서드
