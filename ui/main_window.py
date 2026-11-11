@@ -9,11 +9,12 @@ from ui.theme import Colors, Styles, get_icon, load_fonts
 from ui.customer_view import CustomerView
 from ui.sales_registration_view import SalesRegistrationView
 from ui.sales_cancel_view import SalesCancelView
-from ui.sales_analytics_view import SalesAnalyticsView  # 💡 이슈 13&14 매출분석 뷰 추가
+from ui.sales_analytics_view import SalesAnalyticsView
 from ui.settings_google_view import SettingsGoogleView
 from ui.settings_category_view import SettingsCategoryView
 from ui.settings_point_view import SettingsPointView  
 from ui.settings_designer_view import SettingsDesignerView
+from ui.settings_backup import SettingsBackupView  # 💡 백업 뷰 임포트 추가
 
 
 class SidebarButton(QPushButton):
@@ -143,7 +144,7 @@ class MainWindow(QMainWindow):
         self.btn_customer.clicked.connect(self.show_customer_page)
         self.btn_sales_reg.clicked.connect(self.show_sales_reg_page)
         self.btn_sales_cancel.clicked.connect(self.show_sales_cancel_page)
-        self.btn_sales_analysis.clicked.connect(self.show_sales_analytics_page)  # 💡 매출분석 이벤트 연결
+        self.btn_sales_analysis.clicked.connect(self.show_sales_analytics_page)
 
         self.sub_menu_container = QWidget(sidebar)
         sub_layout = QVBoxLayout(self.sub_menu_container)
@@ -241,7 +242,7 @@ class MainWindow(QMainWindow):
         self.sales_cancel_page = SalesCancelView()
         self.stack.addWidget(self.sales_cancel_page)
 
-        self.sales_analytics_page = SalesAnalyticsView()  # 💡 이슈 13&14 매출분석 뷰 인스턴스화
+        self.sales_analytics_page = SalesAnalyticsView()
         self.stack.addWidget(self.sales_analytics_page)
 
         self.google_setting_page = SettingsGoogleView()
@@ -255,6 +256,9 @@ class MainWindow(QMainWindow):
 
         self.category_setting_page = SettingsCategoryView()
         self.stack.addWidget(self.category_setting_page)
+
+        self.backup_setting_page = SettingsBackupView()  # 💡 백업 뷰 인스턴스화
+        self.stack.addWidget(self.backup_setting_page)
 
         # 상단 헤더 [← 뒤로가기] 버튼 클릭 이벤트 핸들러 분기 처리
         self.btn_top_back.clicked.connect(self.handle_top_back_click)
@@ -354,3 +358,6 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentWidget(self.designer_setting_page)
         elif target_btn == self.btn_sub_category:
             self.stack.setCurrentWidget(self.category_setting_page)
+        elif target_btn == self.btn_sub_backup:  # 💡 백업 서브버튼 이벤트 분기 추가
+            self.backup_setting_page.load_last_backup_date()
+            self.stack.setCurrentWidget(self.backup_setting_page)
