@@ -21,7 +21,7 @@ class DBManager:
         return conn
 
     def init_db(self):
-        """최신 9개 테이블 스키마 생성 및 필수 기본 데이터(선결제 카테고리/적립률) 자동 보장"""
+        """최신 9개 테이블 스키마 생성 및 개인정보/마케팅 동의 컬럼 마이그레이션 자동 수행"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
@@ -41,11 +41,27 @@ class DBManager:
                 phone TEXT NOT NULL UNIQUE,
                 point INTEGER NOT NULL DEFAULT 0,
                 memo TEXT DEFAULT '',
+                is_consent INTEGER NOT NULL DEFAULT 0,
+                consent_at DATETIME,
+                is_marketing_consent INTEGER NOT NULL DEFAULT 0,
+                marketing_consent_at DATETIME,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             """)
+
+            # customer 테이블 마이그레이션 (기존 DB에 필수/선택 동의 컬럼 자동 추가)
+            cursor.execute("PRAGMA table_info(customer);")
+            cust_cols = [col[1] for col in cursor.fetchall()]
+            if "is_consent" not in cust_cols:
+                cursor.execute("ALTER TABLE customer ADD COLUMN is_consent INTEGER NOT NULL DEFAULT 0;")
+            if "consent_at" not in cust_cols:
+                cursor.execute("ALTER TABLE customer ADD COLUMN consent_at DATETIME;")
+            if "is_marketing_consent" not in cust_cols:
+                cursor.execute("ALTER TABLE customer ADD COLUMN is_marketing_consent INTEGER NOT NULL DEFAULT 0;")
+            if "marketing_consent_at" not in cust_cols:
+                cursor.execute("ALTER TABLE customer ADD COLUMN marketing_consent_at DATETIME;")
 
             # 2. 사용자/직원/디자이너 (user)
             cursor.execute("""
@@ -228,33 +244,76 @@ class DBManager:
     # Customer (고객 관리) CRUD 헬퍼
     # -------------------------------------------------------------
     def get_all_customers(self):
-        """활성화된(is_active=1) 고객 목록과 최근 방문일자 조회"""
+            """활성화된(is_active=1) 고객 목록과 개인정보 동의 상태 및 최근 방문일자 조회"""
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute("""
+                    SELECT 
+                        c.id, c.name, c.phone, c.point, c.memo, 
+                        COALESCE(c.is_consent, 0), COALESCE(c.is_marketing_consent, 0),
+                        COALESCE((
+                            SELECT strftime('%Y-%m-%d', MAX(visited_at)) 
+                            FROM visit 
+                            WHERE customer_id = c.id
+                        ), '-') AS recent_visit_date
+                    FROM customer c
+                    WHERE c.is_active = 1
+                    ORDER BY c.id DESC
+                """)
+                rows = cursor.fetchall()
+                return [{
+                    "id": r[0],
+                    "name": r[1],
+                    "phone": r[2],
+                    "point": r[3],
+                    "memo": r[4] or "",
+                    "is_consent": r[5],
+                    "is_marketing_consent": r[6],
+                    "recent_visit": r[7]
+                } for r in rows]
+            except Exception as e:
+                print(f"[DB Error] get_all_customers: {e}")
+                return []
+            finally:
+                conn.close()
+
+    def get_consented_customers(self, query: str = ""):
+        """개인정보 및 마케팅 동의서 출력 화면용 고객 목록 조회"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("""
+            sql = """
                 SELECT 
-                    c.id, c.name, c.phone, c.point, c.memo,
-                    COALESCE((
-                        SELECT strftime('%Y-%m-%d', MAX(visited_at)) 
-                        FROM visit 
-                        WHERE customer_id = c.id
-                    ), '-') AS recent_visit_date
-                FROM customer c
-                WHERE c.is_active = 1
-                ORDER BY c.id DESC
-            """)
+                    id, name, phone, memo, is_consent, 
+                    COALESCE(strftime('%Y-%m-%d %H:%M', consent_at), strftime('%Y-%m-%d %H:%M', created_at)) AS consent_time,
+                    is_marketing_consent,
+                    COALESCE(strftime('%Y-%m-%d %H:%M', marketing_consent_at), '-') AS marketing_consent_time
+                FROM customer
+                WHERE is_active = 1
+            """
+            params = []
+            if query:
+                sql += " AND (name LIKE ? OR phone LIKE ?)"
+                q_param = f"%{query}%"
+                params.extend([q_param, q_param])
+
+            sql += " ORDER BY id DESC"
+            cursor.execute(sql, params)
             rows = cursor.fetchall()
+
             return [{
                 "id": r[0],
                 "name": r[1],
                 "phone": r[2],
-                "point": r[3],
-                "memo": r[4] or "",
-                "recent_visit": r[5]
+                "memo": r[3] or "",
+                "is_consent": r[4],
+                "consent_at": r[5] or "-",
+                "is_marketing_consent": r[6],
+                "marketing_consent_at": r[7] or "-"
             } for r in rows]
         except Exception as e:
-            print(f"[DB Error] get_all_customers: {e}")
+            print(f"[DB Error] get_consented_customers: {e}")
             return []
         finally:
             conn.close()
@@ -268,26 +327,28 @@ class DBManager:
                 cursor.execute("SELECT COUNT(*) FROM customer WHERE phone = ? AND id != ? AND is_active = 1", (phone, int(exclude_id)))
             else:
                 cursor.execute("SELECT COUNT(*) FROM customer WHERE phone = ? AND is_active = 1", (phone,))
-            count = cursor.fetchone()[0]
-            return count > 0
+            return cursor.fetchone()[0] > 0
         except Exception as e:
             print(f"[DB Error] check_phone_duplicate: {e}")
             return False
         finally:
             conn.close()
 
-    def add_customer(self, name: str, phone: str, memo: str = "") -> tuple[bool, str]:
-        """신규 고객 등록 (전화번호 중복 검증)"""
+    def add_customer(self, name: str, phone: str, memo: str = "", is_consent: int = 1, is_marketing_consent: int = 0) -> tuple[bool, str]:
+        """신규 고객 등록 (필수 동의 및 마케팅 동의 정보 함께 저장)"""
         if self.check_phone_duplicate(phone):
             return False, "이미 등록된 전화번호입니다."
         
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if is_consent else None
+            m_now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if is_marketing_consent else None
+            
             cursor.execute("""
-                INSERT INTO customer (name, phone, point, memo, is_active)
-                VALUES (?, ?, 0, ?, 1)
-            """, (name, phone, memo))
+                INSERT INTO customer (name, phone, point, memo, is_consent, consent_at, is_marketing_consent, marketing_consent_at, is_active)
+                VALUES (?, ?, 0, ?, ?, ?, ?, ?, 1)
+            """, (name, phone, memo, is_consent, now_str, is_marketing_consent, m_now_str))
             conn.commit()
             return True, ""
         except Exception as e:
@@ -323,6 +384,31 @@ class DBManager:
             return False, str(e)
         finally:
             conn.close()
+
+    def update_customer_consent(self, customer_id: int, is_consent: int = 1, is_marketing_consent: int = 0) -> bool:
+            """고객의 개인정보 수집 및 마케팅 동의 상태 DB 업데이트"""
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            try:
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                c_time = now_str if is_consent == 1 else None
+                m_time = now_str if is_marketing_consent == 1 else None
+
+                cursor.execute("""
+                    UPDATE customer
+                    SET is_consent = ?, consent_at = ?,
+                        is_marketing_consent = ?, marketing_consent_at = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND is_active = 1
+                """, (is_consent, c_time, is_marketing_consent, m_time, customer_id))
+                conn.commit()
+                return True
+            except Exception as e:
+                conn.rollback()
+                print(f"[DB Error] update_customer_consent: {e}")
+                return False
+            finally:
+                conn.close()
 
     def update_customer_point(self, customer_id: int, new_point: int) -> bool:
         """고객 포인트 업데이트"""
@@ -392,13 +478,12 @@ class DBManager:
     def record_sale(self, customer_id: int, user_id: int, duration_minutes: int,
                     total_amount: int, used_point: int, earned_point: int,
                     visited_at_str: str, memo: str, cart_items: list, payments_history: list) -> bool:
-        """매출 결제 완료 시 visit, visit_service, payment, point_history 등록 및 고객 정보(포인트, 메모) 업데이트"""
+        """매출 결제 완료 시 visit, visit_service, payment, point_history 등록 및 고객 정보 업데이트"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute("BEGIN TRANSACTION;")
 
-            # 1. visit 테이블 저장
             cursor.execute("""
                 INSERT INTO visit (customer_id, user_id, total_duration_minutes, original_amount, discount_amount, used_point, total_amount, visited_at)
                 VALUES (?, ?, ?, ?, 0, ?, ?, ?)
@@ -406,21 +491,18 @@ class DBManager:
             
             visit_id = cursor.lastrowid
 
-            # 2. visit_service 상세 저장
             for item in cart_items:
                 cursor.execute("""
                     INSERT INTO visit_service (visit_id, service_id, user_id, price, quantity)
                     VALUES (?, ?, ?, ?, ?)
                 """, (visit_id, item["id"], user_id, item["price"], item["qty"]))
 
-            # 3. payment 수단별 저장
             for p in payments_history:
                 cursor.execute("""
                     INSERT INTO payment (visit_id, amount, payment_method, paid_at)
                     VALUES (?, ?, ?, ?)
                 """, (visit_id, p["amount"], p["method"], visited_at_str))
 
-            # 4. 포인트 사용/적립 내역 (point_history)
             if used_point > 0:
                 cursor.execute("""
                     INSERT INTO point_history (customer_id, visit_id, amount, type, description)
@@ -433,7 +515,6 @@ class DBManager:
                     VALUES (?, ?, ?, 'EARN', '시술 결제 포인트 적립/충전')
                 """, (customer_id, visit_id, earned_point))
 
-            # 5. customer 포인트 및 메모 최종 업데이트
             cursor.execute("""
                 UPDATE customer
                 SET point = point - ? + ?, memo = ?, updated_at = CURRENT_TIMESTAMP
@@ -931,14 +1012,13 @@ class DBManager:
             conn.close()
 
     # -------------------------------------------------------------
-    # Issue 13 & 14: 통계 분석 헬퍼 메서드
+    # 매출 통계 분석 헬퍼 메서드
     # -------------------------------------------------------------
     def get_daily_sales_analysis(self):
         """금일 매출 분석 4종 KPI 카드, 결제 수단별 금액/비율, 전월 대비 매출 비교 및 TOP3 시술 집계"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            # 1. 오늘 매출 & 방문자 수 & 객단가
             cursor.execute("""
                 SELECT COALESCE(SUM(total_amount), 0), COUNT(id)
                 FROM visit
@@ -949,7 +1029,6 @@ class DBManager:
             today_visitors = today_row[1]
             today_customer_spend = int(today_sales / today_visitors) if today_visitors > 0 else 0
 
-            # 2. 어제 매출 & 방문자 수
             cursor.execute("""
                 SELECT COALESCE(SUM(total_amount), 0), COUNT(id)
                 FROM visit
@@ -959,7 +1038,6 @@ class DBManager:
             yesterday_sales = yesterday_row[0]
             yesterday_visitors = yesterday_row[1]
 
-            # 3. 일일 평균 매출
             cursor.execute("""
                 SELECT COUNT(DISTINCT strftime('%Y-%m-%d', visited_at)),
                        COALESCE(SUM(total_amount), 0)
@@ -970,7 +1048,6 @@ class DBManager:
             all_sales = total_days_row[1]
             avg_daily_sales = int(all_sales / active_days) if active_days > 0 else 0
 
-            # 4. 금일 결제 수단별 금액 및 비율 (카드, 현금, 포인트/선결제)
             today_payments = {"카드": 0, "현금": 0, "포인트": 0}
 
             cursor.execute("""
@@ -1021,7 +1098,6 @@ class DBManager:
             cash_share = round((t_cash / t_sum) * 100, 1) if t_sum > 0 else 0.0
             point_share = round((t_point / t_sum) * 100, 1) if t_sum > 0 else 0.0
 
-            # 5. 전월 대비 같은 기간 매출 비교
             now = datetime.now()
             curr_year = now.year
             curr_month = now.month
@@ -1061,7 +1137,6 @@ class DBManager:
             else:
                 diff_percent = 100.0 if this_month_sales > 0 else 0.0
 
-            # 6. 오늘 판매 TOP 3
             cursor.execute("""
                 SELECT 
                     s.name,
@@ -1133,7 +1208,6 @@ class DBManager:
                 designer_where = " AND v.user_id = ? "
                 params.append(designer_id)
 
-            # 1. 총 매출 & 방문자 수
             cursor.execute(f"""
                 SELECT COALESCE(SUM(v.total_amount), 0), COUNT(DISTINCT v.id)
                 FROM visit v
@@ -1143,7 +1217,6 @@ class DBManager:
             total_sales = sales_row[0]
             visit_count = sales_row[1]
 
-            # 2. 총 시술 시간 (v.total_duration_minutes)
             cursor.execute(f"""
                 SELECT COALESCE(SUM(v.total_duration_minutes), 0)
                 FROM visit v
@@ -1151,13 +1224,11 @@ class DBManager:
             """, params)
             total_duration = cursor.fetchone()[0]
 
-            # 3. 기간 내 일수 계산
             d1 = datetime.strptime(start_date, "%Y-%m-%d")
             d2 = datetime.strptime(end_date, "%Y-%m-%d")
             days_span = (d2 - d1).days + 1
             avg_daily_sales = int(total_sales / days_span) if days_span > 0 else 0
 
-            # 4. 전체 대비 매출 기여도 (%)
             cursor.execute("""
                 SELECT COALESCE(SUM(total_amount), 0)
                 FROM visit
@@ -1169,7 +1240,6 @@ class DBManager:
             else:
                 contribution = 100.0 if total_sales > 0 else 0.0
 
-            # 5. 결제 수단별 매출액
             payments = {"카드": 0, "현금": 0, "포인트": 0}
 
             cursor.execute(f"""
@@ -1203,11 +1273,9 @@ class DBManager:
             if v_used_point > payments["포인트"]:
                 payments["포인트"] = v_used_point
 
-            # 6. 직관적인 기간별 추이 데이터 집계
             trend_data = []
 
             if days_span == 1:
-                # 1일: 시간대별 집계 (예: 09시, 10시...)
                 query_params = [start_date]
                 if designer_id and designer_id != "all":
                     query_params.append(designer_id)
@@ -1222,7 +1290,6 @@ class DBManager:
                     trend_data.append({"label": r[0], "amount": r[1]})
 
             elif days_span <= 31:
-                # 2일 ~ 31일: 일별 집계 (예: 11-01, 11-02...)
                 cursor.execute(f"""
                     SELECT strftime('%Y-%m-%d', v.visited_at) as dt, COALESCE(SUM(v.total_amount), 0)
                     FROM visit v
@@ -1237,7 +1304,6 @@ class DBManager:
                     curr += timedelta(days=1)
 
             elif days_span <= 180:
-                # 32일 ~ 180일 (약 6개월): 주별 집계 (예: 11-1주, 11-2주...)
                 cursor.execute(f"""
                     SELECT strftime('%m월-%W주', v.visited_at) as wk, COALESCE(SUM(v.total_amount), 0)
                     FROM visit v
@@ -1248,7 +1314,6 @@ class DBManager:
                     trend_data.append({"label": r[0], "amount": r[1]})
 
             elif days_span <= 1095:
-                # 181일 ~ 3년: 월별 집계 (예: 24년 11월...)
                 cursor.execute(f"""
                     SELECT strftime('%Y-%m월', v.visited_at) as mn, COALESCE(SUM(v.total_amount), 0)
                     FROM visit v
@@ -1259,7 +1324,6 @@ class DBManager:
                     trend_data.append({"label": r[0][2:], "amount": r[1]})
 
             else:
-                # 3년 초과: 년도별 집계 (예: 2024년...)
                 cursor.execute(f"""
                     SELECT strftime('%Y년', v.visited_at) as yr, COALESCE(SUM(v.total_amount), 0)
                     FROM visit v

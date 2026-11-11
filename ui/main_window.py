@@ -15,7 +15,8 @@ from ui.settings_category_view import SettingsCategoryView
 from ui.settings_point_view import SettingsPointView  
 from ui.settings_designer_view import SettingsDesignerView
 from ui.settings_backup import SettingsBackupView
-from ui.settings_restore import SettingsRestoreView  # 💡 [추가] 복원 뷰 임포트
+from ui.settings_restore import SettingsRestoreView
+from ui.settings_consent_view import SettingsConsentView  # 💡 [추가] 동의서 출력 뷰 임포트
 
 
 class SidebarButton(QPushButton):
@@ -93,9 +94,7 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # -------------------------------------------------------------
         # 1. 좌측 사이드바 패널
-        # -------------------------------------------------------------
         sidebar = QFrame(self)
         sidebar.setFixedWidth(200)
         sidebar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
@@ -153,6 +152,7 @@ class MainWindow(QMainWindow):
         self.btn_sub_point = SidebarButton("포인트 관리", is_sub=True)
         self.btn_sub_designer = SidebarButton("디자이너 관리", is_sub=True)
         self.btn_sub_category = SidebarButton("시술 카테고리 관리", is_sub=True)
+        self.btn_sub_consent = SidebarButton("동의서 출력", is_sub=True)
         self.btn_sub_backup = SidebarButton("백업", is_sub=True)
         self.btn_sub_restore = SidebarButton("복원", is_sub=True)
 
@@ -160,7 +160,8 @@ class MainWindow(QMainWindow):
             self.btn_sub_google, 
             self.btn_sub_point, 
             self.btn_sub_designer, 
-            self.btn_sub_category, 
+            self.btn_sub_category,
+            self.btn_sub_consent, 
             self.btn_sub_backup, 
             self.btn_sub_restore
         ]
@@ -178,9 +179,7 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(sidebar, 0)
 
-        # -------------------------------------------------------------
         # 2. 우측 메인 영역
-        # -------------------------------------------------------------
         right_panel = QWidget(self)
         right_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
@@ -256,8 +255,11 @@ class MainWindow(QMainWindow):
         self.backup_setting_page = SettingsBackupView()
         self.stack.addWidget(self.backup_setting_page)
 
-        self.restore_setting_page = SettingsRestoreView()  # 💡 [추가] 복원 뷰 인스턴스화
+        self.restore_setting_page = SettingsRestoreView()
         self.stack.addWidget(self.restore_setting_page)
+
+        self.consent_setting_page = SettingsConsentView()  # 💡 [추가] 동의서 출력 뷰 인스턴스화
+        self.stack.addWidget(self.consent_setting_page)
 
         self.btn_top_back.clicked.connect(self.handle_top_back_click)
 
@@ -356,6 +358,9 @@ class MainWindow(QMainWindow):
         elif target_btn == self.btn_sub_backup:
             self.backup_setting_page.load_last_backup_date()
             self.stack.setCurrentWidget(self.backup_setting_page)
-        elif target_btn == self.btn_sub_restore:  # 💡 [추가] 복원 메뉴 버튼 연결
+        elif target_btn == self.btn_sub_restore:
             self.restore_setting_page.load_backup_list()
             self.stack.setCurrentWidget(self.restore_setting_page)
+        elif target_btn == self.btn_sub_consent:  # 💡 [추가] 동의서 출력 메뉴 연결
+            self.consent_setting_page.load_customer_data()
+            self.stack.setCurrentWidget(self.consent_setting_page)

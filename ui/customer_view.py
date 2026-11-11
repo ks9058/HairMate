@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
     QFrame, QAbstractItemView, QDialog, QStackedWidget,
-    QTextEdit, QProgressBar, QToolTip
+    QTextEdit, QProgressBar, QToolTip, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QTextDocument, QCursor
@@ -94,6 +94,113 @@ class CustomAlertDialog(QDialog):
         outer_layout.addWidget(container)
 
 
+class CustomConsentDialog(QDialog):
+    """신규 고객 등록 및 기존 고객 방문 시 개인정보 수집 및 선택 마케팅 동의 확인 모달"""
+
+    def __init__(self, name: str, phone: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(500, 480)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(28, 24, 28, 22)
+        c_layout.setSpacing(14)
+
+        lbl_title = QLabel("개인정보 수집 및 마케팅 동의", container)
+        lbl_title.setFont(QFont("Inter", 15, QFont.Bold))
+        lbl_title.setAlignment(Qt.AlignCenter)
+        lbl_title.setStyleSheet("border: none; background: transparent; color: #000000; font-weight: bold;")
+        c_layout.addWidget(lbl_title)
+
+        info_box = QFrame(container)
+        info_box.setStyleSheet("background-color: #F8F9FA; border-radius: 8px; border: 1px solid #E0E0E0;")
+        i_layout = QVBoxLayout(info_box)
+        i_layout.setContentsMargins(16, 12, 16, 12)
+        i_layout.setSpacing(6)
+
+        terms_html = f"""
+        <div style='line-height: 145%; font-size: 11.5px; color: #222222;'>
+            <b>• 대상 고객 :</b> {name} ({phone})<br>
+            <b>[필수] 수집·이용 목적 :</b> 고객 관리, 시술 이력 조회, 포인트 적립/차감<br>
+            <b>[필수] 수집 항목 :</b> 성명, 전화번호, 시술 및 결제 내역<br>
+            <b>[필수] 보유 및 이용 기간 :</b> 회원 탈퇴 또는 고객 정보 삭제 시까지<br>
+            <b>[선택] 마케팅 활용 :</b> 할인 쿠폰, 이벤트 홍보, 신규 시술 광고 SMS 발송
+        </div>
+        """
+        lbl_terms = QLabel(terms_html, info_box)
+        lbl_terms.setWordWrap(True)
+        lbl_terms.setStyleSheet("border: none; background: transparent;")
+        i_layout.addWidget(lbl_terms)
+        c_layout.addWidget(info_box)
+
+        self.chk_consent = QCheckBox(" [필수] 개인정보 수집 및 이용에 동의합니다.", container)
+        self.chk_consent.setFont(QFont("Inter", 11, QFont.Bold))
+        self.chk_consent.setCursor(Qt.PointingHandCursor)
+        self.chk_consent.setStyleSheet(f"""
+            QCheckBox {{ color: #000000; border: none; background: transparent; font-weight: bold; }}
+            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; border: 1px solid #A0A0A0; }}
+            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+        """)
+        c_layout.addWidget(self.chk_consent)
+
+        self.chk_marketing = QCheckBox(" [선택] 마케팅 활용 및 광고성 정보 수신에 동의합니다.", container)
+        self.chk_marketing.setFont(QFont("Inter", 11, QFont.Bold))
+        self.chk_marketing.setCursor(Qt.PointingHandCursor)
+        self.chk_marketing.setStyleSheet(f"""
+            QCheckBox {{ color: #00594C; border: none; background: transparent; font-weight: bold; }}
+            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; border: 1px solid #A0A0A0; }}
+            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+        """)
+        c_layout.addWidget(self.chk_marketing)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        btn_confirm = QPushButton("동의 완료", container)
+        btn_confirm.setFixedHeight(42)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{ background-color: {Colors.PRIMARY}; color: #FFFFFF; border: none; border-radius: 8px; }}
+            QPushButton:hover {{ background-color: {Colors.PRIMARY_HOVER}; }}
+        """)
+        btn_confirm.clicked.connect(self.on_confirm)
+
+        btn_cancel = QPushButton("취소", container)
+        btn_cancel.setFixedHeight(42)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_cancel.setStyleSheet("""
+            QPushButton { background-color: #E0E0E0; color: #333333; border: none; border-radius: 8px; }
+            QPushButton:hover { background-color: #C0C0C0; }
+        """)
+        btn_cancel.clicked.connect(self.reject)
+
+        btn_layout.addWidget(btn_confirm, 1)
+        btn_layout.addWidget(btn_cancel, 1)
+        c_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
+
+    def on_confirm(self):
+        if not self.chk_consent.isChecked():
+            CustomAlertDialog("동의 필요", "[필수] 개인정보 수집 및 이용 동의 항목에 체크해 주세요.", self).exec()
+            return
+        self.accept()
+
+
 class ConfirmCustomerDeleteDialog(QDialog):
     """고객 삭제 확인 커스텀 모달 팝업"""
 
@@ -170,7 +277,7 @@ class ConfirmCustomerDeleteDialog(QDialog):
 
 
 class PreferenceBarRow(QWidget):
-    """시술 선호도 개별 항목 행 (호버 시 툴팁 즉시 팝업 표시)"""
+    """시술 선호도 개별 항목 행"""
 
     def __init__(self, cat_name: str, cnt: int, max_cnt: int, bar_color: str, tooltip_text: str, parent=None):
         super().__init__(parent)
@@ -187,14 +294,12 @@ class PreferenceBarRow(QWidget):
         lbl_cat.setFixedWidth(55)
         lbl_cat.setAlignment(Qt.AlignCenter)
         lbl_cat.setStyleSheet("color: #000000; background: transparent; border: none;")
-        lbl_cat.setToolTip(tooltip_text)
 
         pbar = QProgressBar(self)
         pbar.setFixedHeight(24)
         pbar.setMaximum(max_cnt)
         pbar.setValue(cnt)
         pbar.setTextVisible(False)
-        pbar.setToolTip(tooltip_text)
         pbar.setStyleSheet(f"""
             QProgressBar {{
                 border: none;
@@ -212,7 +317,6 @@ class PreferenceBarRow(QWidget):
         lbl_cnt.setFixedWidth(36)
         lbl_cnt.setAlignment(Qt.AlignCenter)
         lbl_cnt.setStyleSheet("color: #000000; background: transparent; border: none;")
-        lbl_cnt.setToolTip(tooltip_text)
 
         layout.addWidget(lbl_cat)
         layout.addWidget(pbar, 1)
@@ -305,9 +409,7 @@ class CustomerView(QWidget):
         main_layout.setContentsMargins(25, 15, 25, 25)
         main_layout.setSpacing(20)
 
-        # -------------------------------------------------------------
         # 1. 좌측 고객 목록 패널
-        # -------------------------------------------------------------
         left_outer = QFrame(self)
         left_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         left_outer.setAttribute(Qt.WA_StyledBackground, True)
@@ -316,7 +418,6 @@ class CustomerView(QWidget):
         left_layout.setContentsMargins(8, 8, 8, 8)
         left_layout.setSpacing(8)
 
-        # 1.1 상단 검색바
         search_box = QFrame(left_outer)
         search_box.setFixedHeight(42)
         search_box.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
@@ -341,7 +442,6 @@ class CustomerView(QWidget):
 
         left_layout.addWidget(search_box)
 
-        # 1.2 테이블 위젯
         table_container = QFrame(left_outer)
         table_container.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
         table_container.setAttribute(Qt.WA_StyledBackground, True)
@@ -394,9 +494,7 @@ class CustomerView(QWidget):
         left_layout.addWidget(table_container, 1)
         main_layout.addWidget(left_outer, 2)
 
-        # -------------------------------------------------------------
         # 2. 우측 스택 영역
-        # -------------------------------------------------------------
         self.right_container = QWidget(self)
         right_main_layout = QVBoxLayout(self.right_container)
         right_main_layout.setContentsMargins(0, 0, 0, 0)
@@ -450,7 +548,6 @@ class CustomerView(QWidget):
             }
         """
 
-        # 이름 입력
         frame_name = QFrame(reg_inner)
         frame_name.setStyleSheet(row_qss)
         row_name = QHBoxLayout(frame_name)
@@ -469,7 +566,6 @@ class CustomerView(QWidget):
         row_name.addWidget(self.txt_reg_name, 1)
         inner_layout.addWidget(frame_name)
 
-        # 전화번호 입력
         frame_phone = QFrame(reg_inner)
         frame_phone.setStyleSheet(row_qss)
         row_phone = QHBoxLayout(frame_phone)
@@ -489,7 +585,6 @@ class CustomerView(QWidget):
         row_phone.addWidget(self.txt_reg_phone, 1)
         inner_layout.addWidget(frame_phone)
 
-        # 메모 입력
         frame_memo = QFrame(reg_inner)
         frame_memo.setStyleSheet(row_qss)
         row_memo = QHBoxLayout(frame_memo)
@@ -584,10 +679,9 @@ class CustomerView(QWidget):
         tab0_left_inner.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
         tab0_left_inner.setAttribute(Qt.WA_StyledBackground, True)
         left_info_layout = QVBoxLayout(tab0_left_inner)
-        left_info_layout.setContentsMargins(15, 20, 15, 20)
-        left_info_layout.setSpacing(18)
+        left_info_layout.setContentsMargins(15, 18, 15, 18)
+        left_info_layout.setSpacing(14)
 
-        # 고객번호
         f_id = QFrame(tab0_left_inner)
         f_id.setStyleSheet(row_qss)
         r_id = QHBoxLayout(f_id)
@@ -601,7 +695,6 @@ class CustomerView(QWidget):
         r_id.addWidget(self.lbl_info_id, 1)
         left_info_layout.addWidget(f_id)
 
-        # 이름
         f_name = QFrame(tab0_left_inner)
         f_name.setStyleSheet(row_qss)
         r_name = QHBoxLayout(f_name)
@@ -615,7 +708,6 @@ class CustomerView(QWidget):
         r_name.addWidget(self.txt_info_name, 1)
         left_info_layout.addWidget(f_name)
 
-        # 전화번호
         f_phone = QFrame(tab0_left_inner)
         f_phone.setStyleSheet(row_qss)
         r_phone = QHBoxLayout(f_phone)
@@ -630,7 +722,6 @@ class CustomerView(QWidget):
         r_phone.addWidget(self.txt_info_phone, 1)
         left_info_layout.addWidget(f_phone)
 
-        # 포인트
         f_point = QFrame(tab0_left_inner)
         f_point.setStyleSheet(row_qss)
         r_point = QHBoxLayout(f_point)
@@ -644,6 +735,39 @@ class CustomerView(QWidget):
         r_point.addWidget(self.lbl_info_point, 1)
         left_info_layout.addWidget(f_point)
 
+        # [기존 고객 동의 수동 관리 구역]
+        f_consent_box = QFrame(tab0_left_inner)
+        f_consent_box.setStyleSheet("background-color: #F8F9FA; border-radius: 6px; border: 1px solid #E0E0E0;")
+        box_c_layout = QVBoxLayout(f_consent_box)
+        box_c_layout.setContentsMargins(10, 8, 10, 8)
+        box_c_layout.setSpacing(6)
+
+        lbl_c_title = QLabel("개인정보 동의 상태 관리", f_consent_box)
+        lbl_c_title.setFont(QFont("Inter", 9.5, QFont.Bold))
+        lbl_c_title.setStyleSheet("color: #00594C; border: none; background: transparent;")
+        box_c_layout.addWidget(lbl_c_title)
+
+        self.chk_info_consent = QCheckBox("[필수] 개인정보 수집 및 이용 동의", f_consent_box)
+        self.chk_info_consent.setFont(QFont("Inter", 9.5, QFont.Bold))
+        self.chk_info_consent.setCursor(Qt.PointingHandCursor)
+        self.chk_info_consent.setStyleSheet(f"""
+            QCheckBox {{ color: #111111; border: none; background: transparent; }}
+            QCheckBox::indicator {{ width: 15px; height: 15px; border-radius: 3px; border: 1px solid #A0A0A0; }}
+            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+        """)
+        box_c_layout.addWidget(self.chk_info_consent)
+
+        self.chk_info_marketing = QCheckBox("[선택] 마케팅 활용 및 광고 수신 동의", f_consent_box)
+        self.chk_info_marketing.setFont(QFont("Inter", 9.5, QFont.Bold))
+        self.chk_info_marketing.setCursor(Qt.PointingHandCursor)
+        self.chk_info_marketing.setStyleSheet(f"""
+            QCheckBox {{ color: #00594C; border: none; background: transparent; }}
+            QCheckBox::indicator {{ width: 15px; height: 15px; border-radius: 3px; border: 1px solid #A0A0A0; }}
+            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+        """)
+        box_c_layout.addWidget(self.chk_info_marketing)
+
+        left_info_layout.addWidget(f_consent_box)
         left_info_layout.addStretch(1)
         tab0_outer_layout.addWidget(tab0_left_inner, 1)
 
@@ -672,7 +796,7 @@ class CustomerView(QWidget):
         btn_action_layout = QHBoxLayout()
         btn_action_layout.setSpacing(10)
 
-        self.btn_update = QPushButton("고객 정보 수정", tab0_widget)
+        self.btn_update = QPushButton("고객 정보 및 동의 상태 수정", tab0_widget)
         self.btn_update.setFixedHeight(44)
         self.btn_update.setCursor(Qt.PointingHandCursor)
         self.btn_update.setFont(QFont("Inter", 12, QFont.Bold))
@@ -742,10 +866,6 @@ class CustomerView(QWidget):
         self.visit_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.visit_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
-        self.visit_table.setMouseTracking(True)
-        self.visit_table.viewport().setMouseTracking(True)
-        self.visit_table.itemEntered.connect(self.on_visit_table_item_entered)
-
         self.visit_table.setStyleSheet("""
             QTableWidget {
                 border: none;
@@ -767,7 +887,6 @@ class CustomerView(QWidget):
         t_v_layout.addWidget(self.visit_table)
         tab1_layout.addWidget(table_v_container)
 
-        # 하단 통계 영역
         stats_bottom_layout = QHBoxLayout()
         stats_bottom_layout.setSpacing(12)
 
@@ -836,10 +955,6 @@ class CustomerView(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.update_table_column_widths()
-
-    def on_visit_table_item_entered(self, item):
-        if item and item.toolTip():
-            QToolTip.showText(QCursor.pos(), item.toolTip(), self.visit_table)
 
     def _create_stat_card(self, title: str, default_val: str) -> QFrame:
         card = QFrame(self)
@@ -946,7 +1061,6 @@ class CustomerView(QWidget):
 
             self.table.insertRow(row_count)
 
-            # 1, 2, 3 대신 DB 고유 고객번호(cust["id"])를 표시
             item_no = QTableWidgetItem(str(cust["id"]))
             item_no.setTextAlignment(Qt.AlignCenter)
             item_no.setData(Qt.UserRole, cust["id"])
@@ -989,9 +1103,52 @@ class CustomerView(QWidget):
         self.lbl_info_point.setText(f"{target_cust['point']:,}P")
         self.txt_info_memo.setText(target_cust["memo"])
 
+        # DB에서 동의 정보 조회 및 체크박스 상태 동기화
+        consented_list = self.db_manager.get_consented_customers(query=target_cust["phone"])
+        c_info = next((c for c in consented_list if int(c["id"]) == int(cust_id)), None)
+        if c_info:
+            self.chk_info_consent.setChecked(c_info["is_consent"] == 1)
+            self.chk_info_marketing.setChecked(c_info["is_marketing_consent"] == 1)
+        else:
+            self.chk_info_consent.setChecked(False)
+            self.chk_info_marketing.setChecked(False)
+
+        # [자동 팝업 챙김 기능] 기존 이관 고객이 미동의 상태인 경우 팝업으로 재동의 유도
+        if c_info and c_info["is_consent"] == 0:
+            consent_dialog = CustomConsentDialog(target_cust["name"], target_cust["phone"], self)
+            if consent_dialog.exec() == QDialog.Accepted:
+                is_mkt = 1 if consent_dialog.chk_marketing.isChecked() else 0
+                self.update_consent_db(target_cust["id"], is_consent=1, is_marketing=is_mkt)
+                self.chk_info_consent.setChecked(True)
+                self.chk_info_marketing.setChecked(is_mkt == 1)
+
         self.right_stack.setCurrentIndex(1)
         self.page_changed.emit(True)
         self.load_customer_stats(self.selected_customer_id)
+
+    def update_consent_db(self, customer_id: int, is_consent: int, is_marketing: int):
+        """DB에 동의 정보를 직접 반영하는 헬퍼 메서드"""
+        conn = self.db_manager.get_connection()
+        cursor = conn.cursor()
+        try:
+            from datetime import datetime
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            c_time = now_str if is_consent == 1 else None
+            m_time = now_str if is_marketing == 1 else None
+
+            cursor.execute("""
+                UPDATE customer
+                SET is_consent = ?, consent_at = ?,
+                    is_marketing_consent = ?, marketing_consent_at = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND is_active = 1
+            """, (is_consent, c_time, is_marketing, m_time, customer_id))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] update_consent_db: {e}")
+        finally:
+            conn.close()
 
     def reselect_customer(self, customer_id: int):
         for row in range(self.table.rowCount()):
@@ -1111,7 +1268,15 @@ class CustomerView(QWidget):
             self.txt_reg_phone.setFocus()
             return
 
-        success, err_msg = self.db_manager.add_customer(name, phone, memo)
+        consent_dialog = CustomConsentDialog(name, phone, self)
+        if consent_dialog.exec() != QDialog.Accepted:
+            return
+
+        is_marketing = 1 if consent_dialog.chk_marketing.isChecked() else 0
+
+        success, err_msg = self.db_manager.add_customer(
+            name, phone, memo, is_consent=1, is_marketing_consent=is_marketing
+        )
         if success:
             CustomAlertDialog("등록 완료", f"'{name}' 고객이 성공적으로 등록되었습니다.", self).exec()
             self.load_customer_list()
@@ -1139,9 +1304,17 @@ class CustomerView(QWidget):
             return
 
         target_id = int(self.selected_customer_id)
+        
+        # 1. 기본 고객 정보 수정
         success, err_msg = self.db_manager.update_customer(target_id, name, phone, memo)
+        
+        # 2. 동의 상태 체크박스 변경사항 DB 업데이트
+        is_c = 1 if self.chk_info_consent.isChecked() else 0
+        is_m = 1 if self.chk_info_marketing.isChecked() else 0
+        self.update_consent_db(target_id, is_consent=is_c, is_marketing=is_m)
+
         if success:
-            CustomAlertDialog("수정 완료", f"'{name}' 고객의 정보가 수정되었습니다.", self).exec()
+            CustomAlertDialog("수정 완료", f"'{name}' 고객의 정보 및 동의 상태가 수정되었습니다.", self).exec()
             self.load_customer_list()
             self.reselect_customer(target_id)
         else:

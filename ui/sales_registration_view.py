@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
     QFrame, QMessageBox, QAbstractItemView, QStackedWidget,
     QComboBox, QDateEdit, QGridLayout, QScrollArea, QDialog, QSizePolicy,
-    QSpinBox
+    QSpinBox, QCheckBox
 )
 from PySide6.QtCore import Qt, QDate, Signal
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QTextDocument, QPixmap
@@ -92,7 +92,7 @@ SCROLLBAR_STYLE = """
 
 
 class HorizontalScrollArea(QScrollArea):
-    """마우스 휠(위/아래) 조작 시 가로(좌/우) 스크롤로 동작하는 커스텀 QScrollArea"""
+    """마우스 휠 조작 시 가로 스크롤로 동작하는 커스텀 QScrollArea"""
 
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
@@ -106,7 +106,7 @@ class HorizontalScrollArea(QScrollArea):
 
 
 class CustomAlertDialog(QDialog):
-    """커스텀 알림/안내 팝업 (단일 '확인' 버튼 적용)"""
+    """커스텀 알림/안내 팝업"""
 
     def __init__(self, title: str, message: str, parent=None):
         super().__init__(parent)
@@ -156,11 +156,116 @@ class CustomAlertDialog(QDialog):
         btn_confirm.clicked.connect(self.accept)
 
         btn_layout.addWidget(btn_confirm)
-
         c_layout.addWidget(lbl_msg)
+        c_layout.addLayout(btn_layout)
+        outer_layout.addWidget(container)
+
+
+class CustomConsentDialog(QDialog):
+    """이관 고객 첫 결제 시 개인정보 수집 및 선택 마케팅 동의 확인 모달"""
+
+    def __init__(self, name: str, phone: str, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(500, 480)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(28, 24, 28, 22)
+        c_layout.setSpacing(14)
+
+        lbl_title = QLabel("개인정보 수집 및 마케팅 동의", container)
+        lbl_title.setFont(QFont("Inter", 15, QFont.Bold))
+        lbl_title.setAlignment(Qt.AlignCenter)
+        lbl_title.setStyleSheet("border: none; background: transparent; color: #000000; font-weight: bold;")
+        c_layout.addWidget(lbl_title)
+
+        info_box = QFrame(container)
+        info_box.setStyleSheet("background-color: #F8F9FA; border-radius: 8px; border: 1px solid #E0E0E0;")
+        i_layout = QVBoxLayout(info_box)
+        i_layout.setContentsMargins(16, 12, 16, 12)
+        i_layout.setSpacing(6)
+
+        terms_html = f"""
+        <div style='line-height: 145%; font-size: 11.5px; color: #222222;'>
+            <b>• 대상 고객 :</b> {name} ({phone})<br>
+            <b>[필수] 수집·이용 목적 :</b> 고객 관리, 시술 이력 조회, 포인트 적립/차감<br>
+            <b>[필수] 수집 항목 :</b> 성명, 전화번호, 시술 및 결제 내역<br>
+            <b>[필수] 보유 및 이용 기간 :</b> 회원 탈퇴 또는 고객 정보 삭제 시까지<br>
+            <b>[선택] 마케팅 활용 :</b> 할인 쿠폰, 이벤트 홍보, 신규 시술 광고 SMS 발송
+        </div>
+        """
+        lbl_terms = QLabel(terms_html, info_box)
+        lbl_terms.setWordWrap(True)
+        lbl_terms.setStyleSheet("border: none; background: transparent;")
+        i_layout.addWidget(lbl_terms)
+        c_layout.addWidget(info_box)
+
+        self.chk_consent = QCheckBox(" [필수] 개인정보 수집 및 이용에 동의합니다.", container)
+        self.chk_consent.setFont(QFont("Inter", 11, QFont.Bold))
+        self.chk_consent.setCursor(Qt.PointingHandCursor)
+        self.chk_consent.setStyleSheet(f"""
+            QCheckBox {{ color: #000000; border: none; background: transparent; font-weight: bold; }}
+            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; border: 1px solid #A0A0A0; }}
+            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+        """)
+        c_layout.addWidget(self.chk_consent)
+
+        self.chk_marketing = QCheckBox(" [선택] 마케팅 활용 및 광고성 정보 수신에 동의합니다.", container)
+        self.chk_marketing.setFont(QFont("Inter", 11, QFont.Bold))
+        self.chk_marketing.setCursor(Qt.PointingHandCursor)
+        self.chk_marketing.setStyleSheet(f"""
+            QCheckBox {{ color: #00594C; border: none; background: transparent; font-weight: bold; }}
+            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; border: 1px solid #A0A0A0; }}
+            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+        """)
+        c_layout.addWidget(self.chk_marketing)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        btn_confirm = QPushButton("동의 완료", container)
+        btn_confirm.setFixedHeight(42)
+        btn_confirm.setCursor(Qt.PointingHandCursor)
+        btn_confirm.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_confirm.setStyleSheet(f"""
+            QPushButton {{ background-color: {Colors.PRIMARY}; color: #FFFFFF; border: none; border-radius: 8px; }}
+            QPushButton:hover {{ background-color: {Colors.PRIMARY_HOVER}; }}
+        """)
+        btn_confirm.clicked.connect(self.on_confirm)
+
+        btn_cancel = QPushButton("취소", container)
+        btn_cancel.setFixedHeight(42)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_cancel.setStyleSheet("""
+            QPushButton { background-color: #E0E0E0; color: #333333; border: none; border-radius: 8px; }
+            QPushButton:hover { background-color: #C0C0C0; }
+        """)
+        btn_cancel.clicked.connect(self.reject)
+
+        btn_layout.addWidget(btn_confirm, 1)
+        btn_layout.addWidget(btn_cancel, 1)
         c_layout.addLayout(btn_layout)
 
         outer_layout.addWidget(container)
+
+    def on_confirm(self):
+        if not self.chk_consent.isChecked():
+            CustomAlertDialog("동의 필요", "[필수] 개인정보 수집 및 이용 동의 항목에 체크해 주세요.", self).exec()
+            return
+        self.accept()
 
 
 class ConfirmCancelDialog(QDialog):
@@ -450,9 +555,7 @@ class SalesRegistrationView(QWidget):
 
         self.main_stack = QStackedWidget(self)
 
-        # =============================================================
         # Page 0: 고객 선택 화면
-        # =============================================================
         page_select_cust = QWidget()
         select_layout = QHBoxLayout(page_select_cust)
         select_layout.setContentsMargins(0, 0, 0, 0)
@@ -551,9 +654,7 @@ class SalesRegistrationView(QWidget):
         select_layout.addWidget(page_empty, 3)
         self.main_stack.addWidget(page_select_cust)
 
-        # =============================================================
         # Page 1: 매출 등록 대시보드
-        # =============================================================
         page_sales = QWidget()
         sales_layout = QHBoxLayout(page_sales)
         sales_layout.setContentsMargins(0, 0, 0, 0)
@@ -582,7 +683,7 @@ class SalesRegistrationView(QWidget):
             color: #000000;
         """
 
-        # 1-1. 담당 디자이너 (4 비율)
+        # 담당 디자이너
         widget_designer = QWidget(ctrl_frame)
         widget_designer.setStyleSheet("background: transparent; border: none;")
         widget_designer.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -635,7 +736,7 @@ class SalesRegistrationView(QWidget):
         v_designer.addWidget(lbl_d)
         v_designer.addWidget(self.cb_designer)
 
-        # 1-2. 결제일 (3 비율)
+        # 결제일
         widget_date = QWidget(ctrl_frame)
         widget_date.setStyleSheet("background: transparent; border: none;")
         widget_date.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -685,76 +786,11 @@ class SalesRegistrationView(QWidget):
                 height: 10px;
                 margin-right: 3px;
             }}
-            QCalendarWidget QWidget#qt_calendar_navigationbar {{
-                background-color: {Colors.PRIMARY};
-                min-height: 40px;
-            }}
-            QCalendarWidget QToolButton {{
-                color: #FFFFFF;
-                font-size: 13px;
-                font-weight: bold;
-                background-color: transparent;
-                border: none;
-                margin: 2px;
-                padding: 4px 6px;
-            }}
-            QCalendarWidget QToolButton#qt_calendar_monthbutton,
-            QCalendarWidget QToolButton#qt_calendar_yearbutton {{
-                padding-right: 18px;
-            }}
-            QCalendarWidget QToolButton#qt_calendar_monthbutton::menu-indicator,
-            QCalendarWidget QToolButton#qt_calendar_yearbutton::menu-indicator {{
-                subcontrol-origin: padding;
-                subcontrol-position: center right;
-                right: 4px;
-                top: 0px;
-            }}
-            QCalendarWidget QToolButton:hover {{
-                background-color: {Colors.PRIMARY_HOVER};
-                border-radius: 4px;
-            }}
-            QCalendarWidget QMenu {{
-                background-color: #FFFFFF;
-                color: #000000;
-                font-size: 12px;
-                border: 1px solid #B0B0B0;
-            }}
-            QCalendarWidget QMenu::item {{
-                padding: 6px 20px;
-                color: #000000;
-            }}
-            QCalendarWidget QMenu::item:selected {{
-                background-color: #555555;
-                color: #FFFFFF;
-                font-weight: bold;
-            }}
-            QCalendarWidget QSpinBox {{
-                color: #FFFFFF;
-                background-color: transparent;
-                font-weight: bold;
-                font-size: 13px;
-                selection-background-color: {Colors.PRIMARY_HOVER};
-                selection-color: #FFFFFF;
-            }}
-            QCalendarWidget QAbstractItemView:enabled {{
-                color: #000000;
-                background-color: #FFFFFF;
-                selection-background-color: {Colors.PRIMARY};
-                selection-color: #FFFFFF;
-                font-size: 12px;
-            }}
-            QCalendarWidget QAbstractItemView::item:hover {{
-                background-color: #666666;
-                color: #FFFFFF;
-            }}
-            QCalendarWidget QWidget#qt_calendar_calendarview {{
-                background-color: #FFFFFF;
-            }}
         """)
         v_date.addWidget(lbl_dt)
         v_date.addWidget(self.date_visit)
 
-        # 1-3. 시술 시간 (3 비율)
+        # 시술 시간
         widget_dur = QWidget(ctrl_frame)
         widget_dur.setStyleSheet("background: transparent; border: none;")
         widget_dur.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -979,7 +1015,6 @@ class SalesRegistrationView(QWidget):
             }
         """
 
-        # 이름
         f_name = QFrame(upper_info_widget)
         f_name.setFixedHeight(30)
         f_name.setStyleSheet(row_qss)
@@ -995,7 +1030,6 @@ class SalesRegistrationView(QWidget):
         r_name.addWidget(self.lbl_info_name, 1)
         upper_info_layout.addWidget(f_name)
 
-        # 전화번호
         f_phone = QFrame(upper_info_widget)
         f_phone.setFixedHeight(30)
         f_phone.setStyleSheet(row_qss)
@@ -1011,7 +1045,6 @@ class SalesRegistrationView(QWidget):
         r_phone.addWidget(self.lbl_info_phone, 1)
         upper_info_layout.addWidget(f_phone)
 
-        # 포인트
         f_point = QFrame(upper_info_widget)
         f_point.setFixedHeight(30)
         f_point.setStyleSheet(row_qss)
@@ -1027,7 +1060,6 @@ class SalesRegistrationView(QWidget):
         r_point.addWidget(self.lbl_info_point, 1)
         upper_info_layout.addWidget(f_point)
 
-        # 메모 영역
         memo_widget = QWidget(c_inner)
         memo_layout = QVBoxLayout(memo_widget)
         memo_layout.setContentsMargins(0, 0, 0, 0)
@@ -1071,7 +1103,7 @@ class SalesRegistrationView(QWidget):
         right_s_layout.setContentsMargins(0, 0, 0, 0)
         right_s_layout.setSpacing(10)
 
-        # 1. 장바구니 영역 패널
+        # 장바구니 영역 패널
         cart_outer = QFrame(right_sales_panel)
         cart_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         cart_outer.setAttribute(Qt.WA_StyledBackground, True)
@@ -1128,7 +1160,7 @@ class SalesRegistrationView(QWidget):
         cart_o_layout.addWidget(cart_inner)
         right_s_layout.addWidget(cart_outer, 1)
 
-        # 2. 카테고리 탭 및 시술 메뉴 그리드
+        # 카테고리 탭 및 시술 메뉴 그리드
         menu_outer = QFrame(right_sales_panel)
         menu_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         menu_outer.setAttribute(Qt.WA_StyledBackground, True)
@@ -1142,31 +1174,6 @@ class SalesRegistrationView(QWidget):
         category_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         category_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         category_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        
-        category_scroll.horizontalScrollBar().setStyleSheet("""
-            QScrollBar:horizontal {
-                border: none;
-                background: #EAEAEA;
-                height: 10px;
-                margin: 0px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:horizontal {
-                background: #B0B0B0;
-                min-width: 25px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:horizontal:hover {
-                background: #888888;
-            }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-                background: none;
-                width: 0px;
-            }
-            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
-                background: none;
-            }
-        """)
 
         category_widget = QWidget()
         category_widget.setStyleSheet("background: transparent;")
@@ -1189,31 +1196,6 @@ class SalesRegistrationView(QWidget):
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-
-        scroll_area.verticalScrollBar().setStyleSheet("""
-            QScrollBar:vertical {
-                border: none;
-                background: #EAEAEA;
-                width: 10px;
-                margin: 0px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical {
-                background: #B0B0B0;
-                min-height: 25px;
-                border-radius: 5px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #888888;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                background: none;
-                height: 0px;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: none;
-            }
-        """)
 
         self.service_grid_widget = QWidget()
         self.service_grid_widget.setStyleSheet("background: transparent;")
@@ -1240,18 +1222,12 @@ class SalesRegistrationView(QWidget):
         main_layout.addWidget(self.main_stack)
         self.main_stack.setCurrentIndex(0)
 
-    # -------------------------------------------------------------
-    # 뒤로가기 취소 확인 팝업 호출
-    # -------------------------------------------------------------
     def confirm_and_clear_selection(self):
         """뒤로가기 클릭 시 취소 확인 팝업 노출"""
         dialog = ConfirmCancelDialog(self)
         if dialog.exec() == QDialog.Accepted:
             self.clear_customer_selection()
 
-    # -------------------------------------------------------------
-    # 데이터 로딩 및 동적 카테고리/시술 버튼 생성
-    # -------------------------------------------------------------
     def load_customer_list(self):
         self.all_customers = self.db_manager.get_all_customers()
         self.filter_customer_list()
@@ -1269,7 +1245,6 @@ class SalesRegistrationView(QWidget):
 
             self.cust_table.insertRow(row_count)
 
-            # 1, 2, 3 대신 DB 고유 고객번호(cust["id"])를 표시
             item_no = QTableWidgetItem(str(cust["id"]))
             item_no.setTextAlignment(Qt.AlignCenter)
             item_no.setData(Qt.UserRole, cust["id"])
@@ -1388,9 +1363,6 @@ class SalesRegistrationView(QWidget):
             btn.clicked.connect(lambda _, item=svc, cat=category_name: self.add_to_cart(item, cat))
             self.service_grid_layout.addWidget(btn, row, col)
 
-    # -------------------------------------------------------------
-    # 고객 선택 및 상태 관리
-    # -------------------------------------------------------------
     def on_customer_selected(self):
         selected_items = self.cust_table.selectedItems()
         if not selected_items:
@@ -1434,9 +1406,6 @@ class SalesRegistrationView(QWidget):
 
         self.recalculate_payment_status()
 
-    # -------------------------------------------------------------
-    # 항목별 차등 적립 포인트 연산
-    # -------------------------------------------------------------
     def calculate_expected_earned_points(self, current_cash_card_pay: int = 0) -> int:
         gen_rate, prep_rate = self.get_point_rates()
 
@@ -1587,9 +1556,6 @@ class SalesRegistrationView(QWidget):
 
         self.recalculate_payment_status()
 
-    # -------------------------------------------------------------
-    # 커스텀 알림 창(CustomAlertDialog) 적용 결제 처리 및 DB 매출 등록
-    # -------------------------------------------------------------
     def process_payment(self, method: str):
         if not self.cart_items:
             CustomAlertDialog("결제 오류", "장바구니에 담긴 시술이 없습니다.", self).exec()
@@ -1598,6 +1564,24 @@ class SalesRegistrationView(QWidget):
         if self.remaining_amount <= 0:
             CustomAlertDialog("결제 완료", "이미 결제가 완료되었습니다.", self).exec()
             return
+
+        # [이관 고객 및 미동의 고객 첫 결제 시 동의 모달 팝업]
+        if self.selected_customer and self.selected_customer.get("is_consent", 0) == 0:
+            c_name = self.selected_customer.get("name", "")
+            c_phone = self.selected_customer.get("phone", "")
+
+            consent_dialog = CustomConsentDialog(c_name, c_phone, self)
+            if consent_dialog.exec() == QDialog.Accepted:
+                is_mkt = 1 if consent_dialog.chk_marketing.isChecked() else 0
+                cust_id = self.selected_customer["id"]
+
+                # DB 개인정보 동의 상태 및 메모리 객체 동기화
+                self.db_manager.update_customer_consent(cust_id, is_consent=1, is_marketing_consent=is_mkt)
+                self.selected_customer["is_consent"] = 1
+                self.selected_customer["is_marketing_consent"] = is_mkt
+            else:
+                CustomAlertDialog("결제 중단", "개인정보 수집 및 이용 동의가 완료되지 않아 결제가 취소되었습니다.", self).exec()
+                return
 
         digits = "".join(filter(str.isdigit, self.txt_received_amount.text()))
         input_amt = int(digits) if digits else 0
