@@ -60,7 +60,6 @@ class GoogleDriveService:
 
         service = build('drive', 'v3', credentials=self.creds)
 
-        # 1. 폴더 존재 여부 검색 쿼리 작성
         query = f"name = '{folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         if parent_id:
             query += f" and '{parent_id}' in parents"
@@ -71,7 +70,6 @@ class GoogleDriveService:
         if folders:
             return folders[0]['id']
 
-        # 2. 폴더가 없으면 지정된 상위 폴더 내에 생성
         folder_metadata = {
             'name': folder_name,
             'mimeType': 'application/vnd.google-apps.folder'
@@ -82,20 +80,14 @@ class GoogleDriveService:
         folder = service.files().create(body=folder_metadata, fields='id').execute()
         return folder.get('id')
 
-    def get_target_backup_folder_id() -> str:
-        pass  # 아래 메서드로 바인딩됨
-
     def _get_target_backup_folder_id(self) -> str:
         """HairMate / YYYY년 / MM월 계층 구조 폴더 ID 반환"""
         now = datetime.now()
-        year_str = now.strftime("%Y년")   # 예: 2026년
-        month_str = now.strftime("%m월")  # 예: 11월
+        year_str = now.strftime("%Y년")
+        month_str = now.strftime("%m월")
 
-        # 1. 루트 폴더 'HairMate'
         root_id = self.get_or_create_folder("HairMate")
-        # 2. 년도 폴더 '2026년' (HairMate 하위)
         year_id = self.get_or_create_folder(year_str, parent_id=root_id)
-        # 3. 월 폴더 '11월' (2026년 하위)
         month_id = self.get_or_create_folder(month_str, parent_id=year_id)
 
         return month_id
@@ -106,7 +98,6 @@ class GoogleDriveService:
             if not self.authenticate():
                 raise PermissionError("구글 로그인 인증에 실패했습니다.")
 
-        # 최하위 월 폴더 ID 획득
         target_folder_id = self._get_target_backup_folder_id()
 
         service = build('drive', 'v3', credentials=self.creds)
@@ -128,7 +119,7 @@ class GoogleDriveService:
         return file
 
     def list_backups(self) -> list:
-        """현재 월 폴더 내부의 백업 파일 목록 조회 (순번 계산용)"""
+        """현재 월 폴더 내부의 백업 파일 목록 조회 (당일 순번 계산용)"""
         if not self.is_authenticated():
             if not self.authenticate():
                 return []
@@ -141,6 +132,24 @@ class GoogleDriveService:
             return []
 
         query = f"'{target_folder_id}' in parents and name contains 'HairMate_Backup' and trashed = false"
+        results = service.files().list(
+            q=query,
+            fields="files(id, name, size, createdTime)",
+            orderBy="createdTime desc"
+        ).execute()
+
+        return results.get('files', [])
+
+    def list_all_backups(self) -> list:
+        """💡 [추가] HairMate 백업 파일 전체 목록 조회 (복원 선택용)"""
+        if not self.is_authenticated():
+            if not self.authenticate():
+                return []
+
+        service = build('drive', 'v3', credentials=self.creds)
+
+        # HairMate 하위의 모든 암호화 백업 파일(.enc) 검색
+        query = "name contains 'HairMate_Backup' and name contains '.enc' and trashed = false"
         results = service.files().list(
             q=query,
             fields="files(id, name, size, createdTime)",
