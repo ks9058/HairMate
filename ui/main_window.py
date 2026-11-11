@@ -14,11 +14,11 @@ from ui.settings_google_view import SettingsGoogleView
 from ui.settings_category_view import SettingsCategoryView
 from ui.settings_point_view import SettingsPointView  
 from ui.settings_designer_view import SettingsDesignerView
-from ui.settings_backup import SettingsBackupView  # 💡 백업 뷰 임포트 추가
+from ui.settings_backup import SettingsBackupView
+from ui.settings_restore import SettingsRestoreView  # 💡 [추가] 복원 뷰 임포트
 
 
 class SidebarButton(QPushButton):
-    """호버/선택 시 우측 라운드 흰색 바탕 및 검은색 SVG 아이콘으로 전환되는 커스텀 버튼"""
     def __init__(self, text, icon_name=None, is_sub=False, parent=None):
         super().__init__(text, parent)
         self.icon_name = icon_name
@@ -54,7 +54,6 @@ class SidebarButton(QPushButton):
 
 
 class HoverMenuContainer(QWidget):
-    """설정 버튼과 서브메뉴를 감싸 호버 시 서브메뉴가 동적으로 노출되는 컨테이너"""
     def __init__(self, main_btn, sub_container, parent=None):
         super().__init__(parent)
         self.main_btn = main_btn
@@ -140,7 +139,6 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.btn_sales_cancel)
         sidebar_layout.addWidget(self.btn_sales_analysis)
 
-        # 사이드바 버튼 시그널-슬롯 연결
         self.btn_customer.clicked.connect(self.show_customer_page)
         self.btn_sales_reg.clicked.connect(self.show_sales_reg_page)
         self.btn_sales_cancel.clicked.connect(self.show_sales_cancel_page)
@@ -190,7 +188,6 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
-        # 2.1 상단 날짜 헤더 (상단 가로선)
         header = QFrame(right_panel)
         header.setFixedHeight(50)
         header.setStyleSheet(f"background-color: {Colors.BACKGROUND}; border-bottom: 1.5px solid {Colors.PRIMARY};")
@@ -205,7 +202,6 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(lbl_date)
         header_layout.addStretch()
 
-        # 상단 가로선 위의 공통 ← 뒤로가기 버튼
         self.btn_top_back = QPushButton("← 뒤로가기", header)
         self.btn_top_back.setFixedSize(110, 32)
         self.btn_top_back.setCursor(Qt.PointingHandCursor)
@@ -257,13 +253,14 @@ class MainWindow(QMainWindow):
         self.category_setting_page = SettingsCategoryView()
         self.stack.addWidget(self.category_setting_page)
 
-        self.backup_setting_page = SettingsBackupView()  # 💡 백업 뷰 인스턴스화
+        self.backup_setting_page = SettingsBackupView()
         self.stack.addWidget(self.backup_setting_page)
 
-        # 상단 헤더 [← 뒤로가기] 버튼 클릭 이벤트 핸들러 분기 처리
+        self.restore_setting_page = SettingsRestoreView()  # 💡 [추가] 복원 뷰 인스턴스화
+        self.stack.addWidget(self.restore_setting_page)
+
         self.btn_top_back.clicked.connect(self.handle_top_back_click)
 
-        # 각 뷰의 페이지 전환 신호 수신
         self.sales_reg_page.page_changed.connect(self.on_sales_reg_page_changed)
         self.customer_page.page_changed.connect(self.on_customer_page_changed)
 
@@ -276,7 +273,6 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(lambda checked=False, target=btn: self.select_sub_button(target))
 
     def handle_top_back_click(self):
-        """현재 화면에 맞춰 상단 뒤로가기 동작 수행"""
         current_widget = self.stack.currentWidget()
         if current_widget == self.sales_reg_page:
             self.sales_reg_page.confirm_and_clear_selection()
@@ -328,7 +324,6 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.sales_cancel_page)
 
     def show_sales_analytics_page(self):
-        """매출분석 화면 호출 메서드"""
         self.btn_top_back.setVisible(False)
         self.select_main_button(self.btn_sales_analysis)
         for btn in self.sub_buttons:
@@ -358,6 +353,9 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentWidget(self.designer_setting_page)
         elif target_btn == self.btn_sub_category:
             self.stack.setCurrentWidget(self.category_setting_page)
-        elif target_btn == self.btn_sub_backup:  # 💡 백업 서브버튼 이벤트 분기 추가
+        elif target_btn == self.btn_sub_backup:
             self.backup_setting_page.load_last_backup_date()
             self.stack.setCurrentWidget(self.backup_setting_page)
+        elif target_btn == self.btn_sub_restore:  # 💡 [추가] 복원 메뉴 버튼 연결
+            self.restore_setting_page.load_backup_list()
+            self.stack.setCurrentWidget(self.restore_setting_page)
