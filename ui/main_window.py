@@ -16,7 +16,8 @@ from ui.settings_point_view import SettingsPointView
 from ui.settings_designer_view import SettingsDesignerView
 from ui.settings_backup import SettingsBackupView
 from ui.settings_restore import SettingsRestoreView
-from ui.settings_consent_view import SettingsConsentView  # 💡 [추가] 동의서 출력 뷰 임포트
+from ui.settings_consent_view import SettingsConsentView
+from ui.settings_csv_export_view import SettingsCsvExportView  # 💡 [추가] CSV 내보내기 뷰 임포트
 
 
 class SidebarButton(QPushButton):
@@ -153,6 +154,7 @@ class MainWindow(QMainWindow):
         self.btn_sub_designer = SidebarButton("디자이너 관리", is_sub=True)
         self.btn_sub_category = SidebarButton("시술 카테고리 관리", is_sub=True)
         self.btn_sub_consent = SidebarButton("동의서 출력", is_sub=True)
+        self.btn_sub_csv = SidebarButton("CSV 내보내기", is_sub=True)  # 💡 [추가] CSV 내보내기 버튼 생성
         self.btn_sub_backup = SidebarButton("백업", is_sub=True)
         self.btn_sub_restore = SidebarButton("복원", is_sub=True)
 
@@ -162,6 +164,7 @@ class MainWindow(QMainWindow):
             self.btn_sub_designer, 
             self.btn_sub_category,
             self.btn_sub_consent, 
+            self.btn_sub_csv,  # 💡 [추가] 서브 버튼 목록에 포함
             self.btn_sub_backup, 
             self.btn_sub_restore
         ]
@@ -258,8 +261,11 @@ class MainWindow(QMainWindow):
         self.restore_setting_page = SettingsRestoreView()
         self.stack.addWidget(self.restore_setting_page)
 
-        self.consent_setting_page = SettingsConsentView()  # 💡 [추가] 동의서 출력 뷰 인스턴스화
+        self.consent_setting_page = SettingsConsentView()
         self.stack.addWidget(self.consent_setting_page)
+
+        self.csv_export_setting_page = SettingsCsvExportView()  # 💡 [추가] CSV 내보내기 뷰 인스턴스화
+        self.stack.addWidget(self.csv_export_setting_page)
 
         self.btn_top_back.clicked.connect(self.handle_top_back_click)
 
@@ -361,6 +367,8 @@ class MainWindow(QMainWindow):
         elif target_btn == self.btn_sub_restore:
             self.restore_setting_page.load_backup_list()
             self.stack.setCurrentWidget(self.restore_setting_page)
-        elif target_btn == self.btn_sub_consent:  # 💡 [추가] 동의서 출력 메뉴 연결
+        elif target_btn == self.btn_sub_consent:
             self.consent_setting_page.load_customer_data()
             self.stack.setCurrentWidget(self.consent_setting_page)
+        elif target_btn == self.btn_sub_csv:  
+            self.stack.setCurrentWidget(self.csv_export_setting_page)
