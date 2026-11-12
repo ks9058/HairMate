@@ -43,6 +43,30 @@ def get_resource_arrow_path(direction: str = "down") -> str:
     return file_path.replace("\\", "/")
 
 
+def get_checkmark_icon_path() -> str:
+    """프로젝트 루트의 resources 폴더에 흰색 체크(✓) PNG 아이콘을 생성하고 절대 경로 반환"""
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    res_dir = os.path.join(project_root, "resources")
+    os.makedirs(res_dir, exist_ok=True)
+
+    file_path = os.path.join(res_dir, "check_white.png")
+    if not os.path.exists(file_path):
+        pixmap = QPixmap(24, 24)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor("#FFFFFF"), 2.6)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.drawLine(5, 12, 10, 17)
+        painter.drawLine(10, 17, 19, 7)
+        painter.end()
+        pixmap.save(file_path, "PNG")
+
+    return file_path.replace("\\", "/")
+
+
 SCROLLBAR_STYLE = """
     QScrollBar:vertical {
         border: none;
@@ -212,13 +236,25 @@ class CustomConsentDialog(QDialog):
         i_layout.addWidget(lbl_terms)
         c_layout.addWidget(info_box)
 
+        check_icon_path = get_checkmark_icon_path()
+
         self.chk_consent = QCheckBox(" [필수] 개인정보 수집 및 이용에 동의합니다.", container)
         self.chk_consent.setFont(QFont("Inter", 11, QFont.Bold))
         self.chk_consent.setCursor(Qt.PointingHandCursor)
         self.chk_consent.setStyleSheet(f"""
             QCheckBox {{ color: #000000; border: none; background: transparent; font-weight: bold; }}
-            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; border: 1px solid #A0A0A0; }}
-            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 1.5px solid #A0A0A0;
+                background-color: #FFFFFF;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {Colors.PRIMARY};
+                border-color: {Colors.PRIMARY};
+                image: url("{check_icon_path}");
+            }}
         """)
         c_layout.addWidget(self.chk_consent)
 
@@ -227,8 +263,18 @@ class CustomConsentDialog(QDialog):
         self.chk_marketing.setCursor(Qt.PointingHandCursor)
         self.chk_marketing.setStyleSheet(f"""
             QCheckBox {{ color: #00594C; border: none; background: transparent; font-weight: bold; }}
-            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; border: 1px solid #A0A0A0; }}
-            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 1.5px solid #A0A0A0;
+                background-color: #FFFFFF;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {Colors.PRIMARY};
+                border-color: {Colors.PRIMARY};
+                image: url("{check_icon_path}");
+            }}
         """)
         c_layout.addWidget(self.chk_marketing)
 
@@ -665,13 +711,13 @@ class SalesRegistrationView(QWidget):
         left_s_layout.setContentsMargins(0, 0, 0, 0)
         left_s_layout.setSpacing(10)
 
-        # 1. 상단 옵션 바
+# 1. 상단 옵션 바
         ctrl_frame = QFrame(left_sales_panel)
         ctrl_frame.setFixedHeight(64)
         ctrl_frame.setStyleSheet("background-color: #FFFFFF; border: 1px solid #DCDCDC; border-radius: 6px;")
         ctrl_layout = QHBoxLayout(ctrl_frame)
-        ctrl_layout.setContentsMargins(12, 6, 12, 6)
-        ctrl_layout.setSpacing(8)
+        ctrl_layout.setContentsMargins(10, 6, 10, 6)
+        ctrl_layout.setSpacing(6)
 
         arrow_down_path = get_resource_arrow_path("down")
         arrow_up_path = get_resource_arrow_path("up")
@@ -702,11 +748,12 @@ class SalesRegistrationView(QWidget):
         self.cb_designer.setFont(QFont("Inter", 10))
         self.cb_designer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.cb_designer.setMinimumWidth(0)
+        self.cb_designer.view().setMinimumWidth(180)
         self.cb_designer.setStyleSheet(f"""
             QComboBox {{
                 {unified_input_border}
-                padding-left: 6px;
-                padding-right: 20px;
+                padding-left: 8px;
+                padding-right: 24px;
             }}
             QComboBox:focus {{
                 border: 1.5px solid {Colors.PRIMARY};
@@ -714,8 +761,8 @@ class SalesRegistrationView(QWidget):
             }}
             QComboBox::drop-down {{
                 subcontrol-origin: border;
-                subcontrol-position: center right;
-                width: 20px;
+                subcontrol-position: top right;
+                width: 24px;
                 border: none;
                 background: transparent;
             }}
@@ -723,7 +770,6 @@ class SalesRegistrationView(QWidget):
                 image: url("{arrow_down_path}");
                 width: 11px;
                 height: 11px;
-                margin-right: 4px;
             }}
             QComboBox QAbstractItemView {{
                 background-color: #FFFFFF;
@@ -754,7 +800,7 @@ class SalesRegistrationView(QWidget):
         self.date_visit.setDate(QDate.currentDate())
         self.date_visit.setDisplayFormat("yyyy-MM-dd")
         self.date_visit.setFixedHeight(30)
-        self.date_visit.setFont(QFont("Inter", 9))
+        self.date_visit.setFont(QFont("Inter", 10))
         self.date_visit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.date_visit.setMinimumWidth(0)
         self.date_visit.setCalendarPopup(True)
@@ -766,8 +812,8 @@ class SalesRegistrationView(QWidget):
         self.date_visit.setStyleSheet(f"""
             QDateEdit {{
                 {unified_input_border}
-                padding-left: 4px;
-                padding-right: 18px;
+                padding-left: 6px;
+                padding-right: 22px;
             }}
             QDateEdit:focus {{
                 border: 1.5px solid {Colors.PRIMARY};
@@ -775,8 +821,8 @@ class SalesRegistrationView(QWidget):
             }}
             QDateEdit::drop-down {{
                 subcontrol-origin: border;
-                subcontrol-position: center right;
-                width: 18px;
+                subcontrol-position: top right;
+                width: 22px;
                 border: none;
                 background: transparent;
             }}
@@ -784,7 +830,71 @@ class SalesRegistrationView(QWidget):
                 image: url("{arrow_down_path}");
                 width: 10px;
                 height: 10px;
-                margin-right: 3px;
+            }}
+            QCalendarWidget QWidget#qt_calendar_navigationbar {{
+                background-color: {Colors.PRIMARY};
+                min-height: 40px;
+            }}
+            QCalendarWidget QToolButton {{
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: bold;
+                background-color: transparent;
+                border: none;
+                margin: 2px;
+                padding: 4px 6px;
+            }}
+            QCalendarWidget QToolButton#qt_calendar_monthbutton,
+            QCalendarWidget QToolButton#qt_calendar_yearbutton {{
+                padding-right: 18px;
+            }}
+            QCalendarWidget QToolButton#qt_calendar_monthbutton::menu-indicator,
+            QCalendarWidget QToolButton#qt_calendar_yearbutton::menu-indicator {{
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                right: 4px;
+                top: 0px;
+            }}
+            QCalendarWidget QToolButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+                border-radius: 4px;
+            }}
+            QCalendarWidget QMenu {{
+                background-color: #FFFFFF;
+                color: #000000;
+                font-size: 12px;
+                border: 1px solid #B0B0B0;
+            }}
+            QCalendarWidget QMenu::item {{
+                padding: 6px 20px;
+                color: #000000;
+            }}
+            QCalendarWidget QMenu::item:selected {{
+                background-color: #555555;
+                color: #FFFFFF;
+                font-weight: bold;
+            }}
+            QCalendarWidget QSpinBox {{
+                color: #FFFFFF;
+                background-color: transparent;
+                font-weight: bold;
+                font-size: 13px;
+                selection-background-color: {Colors.PRIMARY_HOVER};
+                selection-color: #FFFFFF;
+            }}
+            QCalendarWidget QAbstractItemView:enabled {{
+                color: #000000;
+                background-color: #FFFFFF;
+                selection-background-color: {Colors.PRIMARY};
+                selection-color: #FFFFFF;
+                font-size: 12px;
+            }}
+            QCalendarWidget QAbstractItemView::item:hover {{
+                background-color: #666666;
+                color: #FFFFFF;
+            }}
+            QCalendarWidget QWidget#qt_calendar_calendarview {{
+                background-color: #FFFFFF;
             }}
         """)
         v_date.addWidget(lbl_dt)
@@ -814,12 +924,13 @@ class SalesRegistrationView(QWidget):
         self.spn_duration.setValue(30)
         self.spn_duration.setAlignment(Qt.AlignCenter)
         self.spn_duration.setFixedHeight(30)
-        self.spn_duration.setFont(QFont("Inter", 10, QFont.Bold))
+        self.spn_duration.setFont(QFont("Inter", 10))
         self.spn_duration.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.spn_duration.setMinimumWidth(0)
         self.spn_duration.setStyleSheet(f"""
             QSpinBox {{
                 {unified_input_border}
+                padding-left: 4px;
                 padding-right: 18px;
             }}
             QSpinBox:focus {{
@@ -864,9 +975,9 @@ class SalesRegistrationView(QWidget):
         v_dur.addWidget(lbl_dur)
         v_dur.addLayout(h_dur_box)
 
-        ctrl_layout.addWidget(widget_designer, 4)
-        ctrl_layout.addWidget(widget_date, 3)
-        ctrl_layout.addWidget(widget_dur, 3)
+        ctrl_layout.addWidget(widget_designer, 42)
+        ctrl_layout.addWidget(widget_date, 36)
+        ctrl_layout.addWidget(widget_dur, 22)
         left_s_layout.addWidget(ctrl_frame)
 
         # 2. 통합 결제 정보 카드

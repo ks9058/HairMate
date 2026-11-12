@@ -873,12 +873,40 @@ class SettingsCategoryView(QWidget):
         # DB에서 기존 저장 데이터 로드
         self.categories_data, self.services_map = self.db_manager.fetch_active_categories_and_services()
         self.current_category = self.categories_data[0]["name"] if self.categories_data else None
+        self.original_state = self._get_current_state_snapshot()
 
         self.category_widgets = []
         self.badge_widgets = []
         self.service_widgets = []
 
         self.setup_ui()
+
+    def _get_current_state_snapshot(self):
+        """현재 카테고리/시술 데이터의 상태 스냅샷 반환 (순서, 이름, 가격, 수정/삭제 플래그 포함)"""
+        cat_snapshot = [
+            (
+                c.get("id"),
+                c.get("name"),
+                bool(c.get("edited", False)),
+                bool(c.get("deleted", False)),
+            )
+            for c in self.categories_data
+        ]
+        svc_snapshot = {}
+        for c in self.categories_data:
+            cat_name = c.get("name")
+            svcs = self.services_map.get(cat_name, [])
+            svc_snapshot[cat_name] = [
+                (
+                    s.get("id"),
+                    s.get("name"),
+                    s.get("price"),
+                    bool(s.get("edited", False)),
+                    bool(s.get("deleted", False)),
+                )
+                for s in svcs
+            ]
+        return (cat_snapshot, svc_snapshot)
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -1044,10 +1072,22 @@ class SettingsCategoryView(QWidget):
         btn_layout = QHBoxLayout()
         btn_layout.setAlignment(Qt.AlignCenter)
 
-        self.btn_save_all = QPushButton("변경 사항 모두 저장", self)
+        self.btn_save_all = QPushButton("", self)
         self.btn_save_all.setFixedSize(320, 45)
         self.btn_save_all.setCursor(Qt.PointingHandCursor)
         self.btn_save_all.setStyleSheet(Styles.PRIMARY_BUTTON)
+
+        btn_save_all_layout = QHBoxLayout(self.btn_save_all)
+        btn_save_all_layout.setContentsMargins(10, 0, 10, 0)
+        btn_save_all_layout.setAlignment(Qt.AlignCenter)
+
+        self.lbl_btn_save_all_text = QLabel("변경 사항 모두 저장", self.btn_save_all)
+        self.lbl_btn_save_all_text.setFont(QFont("Inter", 13, QFont.Bold))
+        self.lbl_btn_save_all_text.setAlignment(Qt.AlignCenter)
+        self.lbl_btn_save_all_text.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.lbl_btn_save_all_text.setStyleSheet("color: #FFFFFF; background: transparent; border: none;")
+        btn_save_all_layout.addWidget(self.lbl_btn_save_all_text)
+
         self.btn_save_all.clicked.connect(self.on_save_all)
 
         btn_layout.addWidget(self.btn_save_all)
@@ -1055,6 +1095,23 @@ class SettingsCategoryView(QWidget):
 
         self.render_categories()
         self.render_services()
+
+    def set_save_button_dirty(self, is_dirty: bool):
+        """변경 사항 존재 여부에 따라 저장 버튼 텍스트에 빨간색 * 표시"""
+        if is_dirty:
+            self.lbl_btn_save_all_text.setText(
+                "변경 사항 모두 저장 <span style='color:#FF4D4F; font-weight:bold;'>*</span>"
+            )
+        else:
+            self.lbl_btn_save_all_text.setText("변경 사항 모두 저장")
+
+    def check_changes_modified(self):
+        """현재 카테고리/시술 목록 상태가 초기 로드/저장 상태와 다른지 확인"""
+        if self.original_state is None:
+            self.set_save_button_dirty(False)
+            return
+
+        self.set_save_button_dirty(self._get_current_state_snapshot() != self.original_state)
 
     def showEvent(self, event):
         """화면이 활성화되거나 처음 렌더링될 때 정확한 너비를 계산하여 가로로 재배치"""
@@ -1074,12 +1131,14 @@ class SettingsCategoryView(QWidget):
                 item = self.categories_data.pop(src_idx)
                 self.categories_data.insert(target_idx, item)
                 self.render_categories()
+                self.check_changes_modified()
         elif target_type == "service":
             services = self.services_map.get(self.current_category, [])
             if src_idx < len(services) and target_idx < len(services):
                 item = services.pop(src_idx)
                 services.insert(target_idx, item)
                 self.render_services()
+                self.check_changes_modified()
 
     def select_category_by_name(self, cat_name: str):
         self.current_category = cat_name
@@ -1150,6 +1209,7 @@ class SettingsCategoryView(QWidget):
             
         self.render_categories()
         self.render_services()
+        self.check_changes_modified()
 
     def get_calculated_columns(self) -> int:
         viewport_w = self.svc_scroll_area.viewport().width()
@@ -1208,6 +1268,7 @@ class SettingsCategoryView(QWidget):
         svc_data["price"] = card_widget.price
         svc_data["edited"] = card_widget.is_edited
         svc_data["deleted"] = card_widget.is_deleted
+        self.check_changes_modified()
 
     def on_select_category(self, target_card: CategoryCard):
         self.select_category_by_name(target_card.name)
@@ -1229,6 +1290,7 @@ class SettingsCategoryView(QWidget):
                     self.services_map[cat_name] = []
                     self.select_category_by_name(cat_name)
                     self.render_categories()
+                    self.check_changes_modified()
 
     def on_add_service(self):
         if not self.current_category:
@@ -1250,6 +1312,7 @@ class SettingsCategoryView(QWidget):
                 
                 self.services_map[self.current_category].append(new_service)
                 self.render_services()
+                self.check_changes_modified()
 
     def on_save_all(self):
         """'변경 사항 모두 저장' 버튼 클릭 시 SQLite 트랜잭션 일괄 저장 실행"""
@@ -1264,6 +1327,9 @@ class SettingsCategoryView(QWidget):
                     self.current_category = valid_names[0]
             else:
                 self.current_category = None
+
+            self.original_state = self._get_current_state_snapshot()
+            self.set_save_button_dirty(False)
 
             self.render_categories()
             self.render_services()
