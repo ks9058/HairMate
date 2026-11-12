@@ -25,14 +25,6 @@ class DBManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # 구버전 user 테이블 감지 시 마이그레이션
-            cursor.execute("PRAGMA table_info(user);")
-            user_cols_info = cursor.fetchall()
-            if user_cols_info:
-                col_names = [col[1] for col in user_cols_info]
-                if "name" not in col_names:
-                    cursor.execute("DROP TABLE IF EXISTS user;")
-
             # 1. 고객 (customer)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS customer (
@@ -50,18 +42,6 @@ class DBManager:
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             """)
-
-            # customer 테이블 마이그레이션 (기존 DB에 필수/선택 동의 컬럼 자동 추가)
-            cursor.execute("PRAGMA table_info(customer);")
-            cust_cols = [col[1] for col in cursor.fetchall()]
-            if "is_consent" not in cust_cols:
-                cursor.execute("ALTER TABLE customer ADD COLUMN is_consent INTEGER NOT NULL DEFAULT 0;")
-            if "consent_at" not in cust_cols:
-                cursor.execute("ALTER TABLE customer ADD COLUMN consent_at DATETIME;")
-            if "is_marketing_consent" not in cust_cols:
-                cursor.execute("ALTER TABLE customer ADD COLUMN is_marketing_consent INTEGER NOT NULL DEFAULT 0;")
-            if "marketing_consent_at" not in cust_cols:
-                cursor.execute("ALTER TABLE customer ADD COLUMN marketing_consent_at DATETIME;")
 
             # 2. 사용자/직원/디자이너 (user)
             cursor.execute("""
@@ -100,6 +80,7 @@ class DBManager:
             else:
                 cursor.execute("UPDATE category SET is_system = 1 WHERE name = '선결제';")
 
+
             # 4. 시술 (service)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS service (
@@ -135,11 +116,6 @@ class DBManager:
             );
             """)
 
-            cursor.execute("PRAGMA table_info(visit);")
-            visit_cols = [col[1] for col in cursor.fetchall()]
-            if "user_id" not in visit_cols:
-                cursor.execute("ALTER TABLE visit ADD COLUMN user_id INTEGER;")
-
             # 6. 상세 시술 내역 (visit_service)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS visit_service (
@@ -156,11 +132,6 @@ class DBManager:
                 FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE SET NULL
             );
             """)
-
-            cursor.execute("PRAGMA table_info(visit_service);")
-            vs_cols = [col[1] for col in cursor.fetchall()]
-            if "user_id" not in vs_cols:
-                cursor.execute("ALTER TABLE visit_service ADD COLUMN user_id INTEGER;")
 
             # 7. 결제 수단별 기록 (payment)
             cursor.execute("""
@@ -244,39 +215,39 @@ class DBManager:
     # Customer (고객 관리) CRUD 헬퍼
     # -------------------------------------------------------------
     def get_all_customers(self):
-            """활성화된(is_active=1) 고객 목록과 개인정보 동의 상태 및 최근 방문일자 조회"""
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            try:
-                cursor.execute("""
-                    SELECT 
-                        c.id, c.name, c.phone, c.point, c.memo, 
-                        COALESCE(c.is_consent, 0), COALESCE(c.is_marketing_consent, 0),
-                        COALESCE((
-                            SELECT strftime('%Y-%m-%d', MAX(visited_at)) 
-                            FROM visit 
-                            WHERE customer_id = c.id
-                        ), '-') AS recent_visit_date
-                    FROM customer c
-                    WHERE c.is_active = 1
-                    ORDER BY c.id DESC
-                """)
-                rows = cursor.fetchall()
-                return [{
-                    "id": r[0],
-                    "name": r[1],
-                    "phone": r[2],
-                    "point": r[3],
-                    "memo": r[4] or "",
-                    "is_consent": r[5],
-                    "is_marketing_consent": r[6],
-                    "recent_visit": r[7]
-                } for r in rows]
-            except Exception as e:
-                print(f"[DB Error] get_all_customers: {e}")
-                return []
-            finally:
-                conn.close()
+        """활성화된(is_active=1) 고객 목록과 개인정보 동의 상태 및 최근 방문일자 조회"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT 
+                    c.id, c.name, c.phone, c.point, c.memo, 
+                    COALESCE(c.is_consent, 0), COALESCE(c.is_marketing_consent, 0),
+                    COALESCE((
+                        SELECT strftime('%Y-%m-%d', MAX(visited_at)) 
+                        FROM visit 
+                        WHERE customer_id = c.id
+                    ), '-') AS recent_visit_date
+                FROM customer c
+                WHERE c.is_active = 1
+                ORDER BY c.id DESC
+            """)
+            rows = cursor.fetchall()
+            return [{
+                "id": r[0],
+                "name": r[1],
+                "phone": r[2],
+                "point": r[3],
+                "memo": r[4] or "",
+                "is_consent": r[5],
+                "is_marketing_consent": r[6],
+                "recent_visit": r[7]
+            } for r in rows]
+        except Exception as e:
+            print(f"[DB Error] get_all_customers: {e}")
+            return []
+        finally:
+            conn.close()
 
     def get_consented_customers(self, query: str = ""):
         """개인정보 및 마케팅 동의서 출력 화면용 고객 목록 조회"""
@@ -285,10 +256,17 @@ class DBManager:
         try:
             sql = """
                 SELECT 
-                    id, name, phone, memo, is_consent, 
-                    COALESCE(strftime('%Y-%m-%d %H:%M', consent_at), strftime('%Y-%m-%d %H:%M', created_at)) AS consent_time,
-                    is_marketing_consent,
-                    COALESCE(strftime('%Y-%m-%d %H:%M', marketing_consent_at), '-') AS marketing_consent_time
+                    id, name, phone, memo,
+                    COALESCE(is_consent, 0),
+                    CASE 
+                        WHEN is_consent = 1 THEN COALESCE(strftime('%Y-%m-%d', consent_at), strftime('%Y-%m-%d', created_at))
+                        ELSE '-'
+                    END AS consent_date,
+                    COALESCE(is_marketing_consent, 0),
+                    CASE 
+                        WHEN is_marketing_consent = 1 THEN COALESCE(strftime('%Y-%m-%d', marketing_consent_at), strftime('%Y-%m-%d', created_at))
+                        ELSE '-'
+                    END AS marketing_consent_date
                 FROM customer
                 WHERE is_active = 1
             """
@@ -409,44 +387,6 @@ class DBManager:
                 return False
             finally:
                 conn.close()
-
-    def update_customer_point(self, customer_id: int, new_point: int) -> bool:
-        """고객 포인트 업데이트"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("""
-                UPDATE customer
-                SET point = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND is_active = 1
-            """, (int(new_point), int(customer_id)))
-            conn.commit()
-            return True
-        except Exception as e:
-            conn.rollback()
-            print(f"[DB Error] update_customer_point: {e}")
-            return False
-        finally:
-            conn.close()
-
-    def update_customer_memo(self, customer_id: int, memo: str) -> bool:
-        """고객 메모 단독 업데이트"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("""
-                UPDATE customer
-                SET memo = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND is_active = 1
-            """, (str(memo), int(customer_id)))
-            conn.commit()
-            return True
-        except Exception as e:
-            conn.rollback()
-            print(f"[DB Error] update_customer_memo: {e}")
-            return False
-        finally:
-            conn.close()
 
     def delete_customer(self, customer_id: int) -> bool:
             """고객 삭제 처리 (개인정보보호법 준수를 위한 식별정보 익명화 및 매출 데이터 보존)"""
@@ -836,6 +776,8 @@ class DBManager:
                 WHERE id = ? AND is_active = 1
             """, (net_point_change, customer_id))
 
+            cursor.execute("DELETE FROM visit_service WHERE visit_id = ?", (visit_id,))
+            cursor.execute("DELETE FROM payment WHERE visit_id = ?", (visit_id,))
             cursor.execute("DELETE FROM point_history WHERE visit_id = ?", (visit_id,))
             cursor.execute("DELETE FROM visit WHERE id = ?", (visit_id,))
 
@@ -1005,32 +947,32 @@ class DBManager:
             conn.close()
 
     def delete_designer(self, user_id: int) -> bool:
-            """직원 삭제 처리 (과거 매출 통계 보존 + 개인 연락처 익명화)"""
-            try:
-                user_id = int(user_id)
-            except (TypeError, ValueError):
-                return False
+        """직원 삭제 처리 (과거 매출 통계 보존 + 개인 연락처 익명화)"""
+        try:
+            user_id = int(user_id)
+        except (TypeError, ValueError):
+            return False
 
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            try:
-                # 이름은 변경하지 않고 position을 '퇴사'로 변경 (조회 시 '이름 (퇴사)'로 자동 포맷팅됨)
-                cursor.execute("""
-                    UPDATE user 
-                    SET is_active = 0,
-                        phone = '',
-                        position = '퇴사',
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ? AND is_active = 1
-                """, (user_id,))
-                conn.commit()
-                return True
-            except Exception as e:
-                conn.rollback()
-                print(f"[DB Error] delete_designer: {e}")
-                return False
-            finally:
-                conn.close()
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # 이름은 변경하지 않고 position을 '퇴사'로 변경 (조회 시 '이름 (퇴사)'로 자동 포맷팅됨)
+            cursor.execute("""
+                UPDATE user 
+                SET is_active = 0,
+                    phone = '',
+                    position = '퇴사',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND is_active = 1
+            """, (user_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] delete_designer: {e}")
+            return False
+        finally:
+            conn.close()
 
     # -------------------------------------------------------------
     # 매출 통계 분석 헬퍼 메서드
@@ -1224,45 +1166,50 @@ class DBManager:
         cursor = conn.cursor()
         try:
             params = [start_date, end_date]
+            is_all_designers = not designer_id or designer_id == "all"
             designer_where = ""
-            if designer_id and designer_id != "all":
+            if not is_all_designers:
                 designer_where = " AND v.user_id = ? "
                 params.append(designer_id)
 
+            # 1. 총매출, 방문수, 총 시술시간, 사용 포인트를 단일 쿼리로 통합 집계
             cursor.execute(f"""
-                SELECT COALESCE(SUM(v.total_amount), 0), COUNT(DISTINCT v.id)
+                SELECT 
+                    COALESCE(SUM(v.total_amount), 0),
+                    COUNT(DISTINCT v.id),
+                    COALESCE(SUM(v.total_duration_minutes), 0),
+                    COALESCE(SUM(v.used_point), 0)
                 FROM visit v
                 WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
             """, params)
             sales_row = cursor.fetchone()
             total_sales = sales_row[0]
             visit_count = sales_row[1]
-
-            cursor.execute(f"""
-                SELECT COALESCE(SUM(v.total_duration_minutes), 0)
-                FROM visit v
-                WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
-            """, params)
-            total_duration = cursor.fetchone()[0]
+            total_duration = sales_row[2]
+            v_used_point = sales_row[3]
 
             d1 = datetime.strptime(start_date, "%Y-%m-%d")
             d2 = datetime.strptime(end_date, "%Y-%m-%d")
             days_span = (d2 - d1).days + 1
             avg_daily_sales = int(total_sales / days_span) if days_span > 0 else 0
 
-            cursor.execute("""
-                SELECT COALESCE(SUM(total_amount), 0)
-                FROM visit
-                WHERE strftime('%Y-%m-%d', visited_at) BETWEEN ? AND ?
-            """, (start_date, end_date))
-            all_store_sales = cursor.fetchone()[0]
-            if all_store_sales > 0:
-                contribution = round((total_sales / all_store_sales) * 100, 1)
-            else:
+            # 2. 디자이너 기여도 계산 (전체 조회 시 중복 쿼리 생략)
+            if is_all_designers:
                 contribution = 100.0 if total_sales > 0 else 0.0
+            else:
+                cursor.execute("""
+                    SELECT COALESCE(SUM(total_amount), 0)
+                    FROM visit
+                    WHERE strftime('%Y-%m-%d', visited_at) BETWEEN ? AND ?
+                """, (start_date, end_date))
+                all_store_sales = cursor.fetchone()[0]
+                if all_store_sales > 0:
+                    contribution = round((total_sales / all_store_sales) * 100, 1)
+                else:
+                    contribution = 100.0 if total_sales > 0 else 0.0
 
+            # 3. 결제 수단별 합산
             payments = {"카드": 0, "현금": 0, "포인트": 0}
-
             cursor.execute(f"""
                 SELECT 
                     p.payment_method,
@@ -1285,20 +1232,15 @@ class DBManager:
                 else:
                     payments["카드"] += amt
 
-            cursor.execute(f"""
-                SELECT COALESCE(SUM(v.used_point), 0)
-                FROM visit v
-                WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
-            """, params)
-            v_used_point = cursor.fetchone()[0] or 0
             if v_used_point > payments["포인트"]:
                 payments["포인트"] = v_used_point
 
+            # 4. 조회 기간에 따른 그래프 추이 집계
             trend_data = []
 
             if days_span == 1:
                 query_params = [start_date]
-                if designer_id and designer_id != "all":
+                if not is_all_designers:
                     query_params.append(designer_id)
 
                 cursor.execute(f"""
@@ -1326,13 +1268,13 @@ class DBManager:
 
             elif days_span <= 180:
                 cursor.execute(f"""
-                    SELECT strftime('%m월-%W주', v.visited_at) as wk, COALESCE(SUM(v.total_amount), 0)
+                    SELECT strftime('%Y-%m월-%W주', v.visited_at) as wk, COALESCE(SUM(v.total_amount), 0)
                     FROM visit v
                     WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
                     GROUP BY wk ORDER BY wk ASC
                 """, params)
                 for r in cursor.fetchall():
-                    trend_data.append({"label": r[0], "amount": r[1]})
+                    trend_data.append({"label": r[0][2:], "amount": r[1]})
 
             elif days_span <= 1095:
                 cursor.execute(f"""
@@ -1376,32 +1318,32 @@ class DBManager:
             conn.close()
 
     def get_customers_csv_data(self):
-            """고객 정보 및 동의 내역 CSV 내보내기용 데이터 조회"""
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            try:
-                cursor.execute("""
-                    SELECT 
-                        c.id AS 고객번호,
-                        c.name AS 고객명,
-                        c.phone AS 전화번호,
-                        c.point AS 보유포인트,
-                        CASE WHEN c.is_consent = 1 THEN '동의' ELSE '미동의' END AS 필수동의여부,
-                        COALESCE(strftime('%Y-%m-%d %H:%M:%S', c.consent_at), '-') AS 필수동의일시,
-                        CASE WHEN c.is_marketing_consent = 1 THEN '동의' ELSE '미동의' END AS 마케팅동의여부,
-                        COALESCE(strftime('%Y-%m-%d %H:%M:%S', c.marketing_consent_at), '-') AS 마케팅동의일시,
-                        c.memo AS 특이사항메모,
-                        strftime('%Y-%m-%d %H:%M:%S', c.created_at) AS 최초등록일시
-                    FROM customer c
-                    WHERE c.is_active = 1
-                    ORDER BY c.id ASC
-                """)
-                return cursor.fetchall()
-            except Exception as e:
-                print(f"[DB Error] get_customers_csv_data: {e}")
-                return []
-            finally:
-                conn.close()
+        """고객 정보 및 동의 내역 CSV 내보내기용 데이터 조회"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT 
+                    c.id AS 고객번호,
+                    c.name AS 고객명,
+                    c.phone AS 전화번호,
+                    c.point AS 보유포인트,
+                    CASE WHEN c.is_consent = 1 THEN '동의' ELSE '미동의' END AS 필수동의여부,
+                    COALESCE(strftime('%Y-%m-%d %H:%M:%S', c.consent_at), '-') AS 필수동의일시,
+                    CASE WHEN c.is_marketing_consent = 1 THEN '동의' ELSE '미동의' END AS 마케팅동의여부,
+                    COALESCE(strftime('%Y-%m-%d %H:%M:%S', c.marketing_consent_at), '-') AS 마케팅동의일시,
+                    c.memo AS 특이사항메모,
+                    strftime('%Y-%m-%d %H:%M:%S', c.created_at) AS 최초등록일시
+                FROM customer c
+                WHERE c.is_active = 1
+                ORDER BY c.id ASC
+            """)
+            return cursor.fetchall()
+        except Exception as e:
+            print(f"[DB Error] get_customers_csv_data: {e}")
+            return []
+        finally:
+            conn.close()
 
     def get_sales_csv_data(self):
         """매출 및 시술 결제 내역 CSV 내보내기용 데이터 조회"""
@@ -1436,7 +1378,7 @@ class DBManager:
                 FROM visit v
                 JOIN customer c ON v.customer_id = c.id
                 LEFT JOIN user u ON v.user_id = u.id
-                ORDER BY v.id DESC
+                ORDER BY v.visited_at DESC, v.id DESC
             """)
             return cursor.fetchall()
         except Exception as e:
