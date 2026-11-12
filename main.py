@@ -3,6 +3,7 @@ import os
 import ctypes
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt
 from ui.login_view import LoginView
 from ui.main_window import MainWindow
 from core.db_manager import DBManager
@@ -45,6 +46,12 @@ def main():
     db_mgr.init_db()
 
     app = QApplication(sys.argv)
+
+    # Windows 다크 모드 영향 방지를 위한 앱 전역 라이트 모드 고정
+    try:
+        app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+    except AttributeError:
+        pass
 
     # 2. resources 폴더의 HM.svg 파일 로드 및 앱 전역 아이콘 지정
     project_root = os.path.dirname(os.path.abspath(__file__))

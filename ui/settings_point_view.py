@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QFrame, QLineEdit, QDialog
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from ui.theme import Colors, Styles
 from core.db_manager import DBManager
@@ -71,6 +71,8 @@ class ArrowSpinBox(QWidget):
     QSpinBox의 내부 스크롤/텍스트 사라짐 버그를 해결한 커스텀 스핀박스 위젯.
     높이를 44px로 확대하여 시인성을 높였습니다.
     """
+    valueChanged = Signal(int)
+
     def __init__(self, default_val=10, parent=None):
         super().__init__(parent)
         self._value = default_val
@@ -98,6 +100,7 @@ class ArrowSpinBox(QWidget):
                 background-color: transparent;
             }
         """)
+        self.edit.textChanged.connect(self._on_text_changed)
         self.edit.editingFinished.connect(self._on_editing_finished)
 
         # 2. ▲ / ▼ 삼각형 버튼 영역
@@ -151,6 +154,10 @@ class ArrowSpinBox(QWidget):
         layout.addWidget(self.edit)
         layout.addWidget(btn_container)
 
+    def _on_text_changed(self, text: str):
+        """실시간 타이핑 중에도 값 변경 감지 시그널 발생"""
+        self.valueChanged.emit(self.current_display_value())
+
     def _on_editing_finished(self):
         """직접 타이핑 입력 시 숫자 추출 및 0~100 범위 제한 적용"""
         text = self.edit.text()
@@ -168,12 +175,22 @@ class ArrowSpinBox(QWidget):
         if self._value > 0:
             self.setValue(self._value - 1)
 
+    def current_display_value(self) -> int:
+        """현재 입력창에 표시된 숫자 반환 (미입력 상태면 -1)"""
+        digits = "".join(filter(str.isdigit, self.edit.text()))
+        if not digits:
+            return -1
+        return max(0, min(100, int(digits)))
+
     def value(self) -> int:
         return self._value
 
     def setValue(self, val: int):
         self._value = max(0, min(100, int(val)))
+        self.edit.blockSignals(True)
         self.edit.setText(f"{self._value} %")
+        self.edit.blockSignals(False)
+        self.valueChanged.emit(self._value)
 
 
 class SettingsPointView(QWidget):
@@ -185,6 +202,7 @@ class SettingsPointView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.db_manager = DBManager()
+        self.original_rates = None
 
         self.setup_ui()
         self.load_point_rates()
@@ -246,6 +264,7 @@ class SettingsPointView(QWidget):
         lbl_general.setStyleSheet("color: #000000; background: transparent;")
 
         self.spn_general = ArrowSpinBox(default_val=10, parent=inner_box)
+        self.spn_general.valueChanged.connect(self.check_rates_modified)
 
         row_general.addWidget(lbl_general)
         row_general.addStretch()
@@ -265,6 +284,7 @@ class SettingsPointView(QWidget):
         lbl_prepaid.setStyleSheet("color: #000000; background: transparent;")
 
         self.spn_prepaid = ArrowSpinBox(default_val=20, parent=inner_box)
+        self.spn_prepaid.valueChanged.connect(self.check_rates_modified)
 
         row_prepaid.addWidget(lbl_prepaid)
         row_prepaid.addStretch()
@@ -281,10 +301,9 @@ class SettingsPointView(QWidget):
         center_layout.addWidget(outer_box)
 
         # 4. 하단 저장하기 버튼
-        self.btn_save = QPushButton("저장하기", center_container)
+        self.btn_save = QPushButton("", center_container)
         self.btn_save.setFixedHeight(52)
         self.btn_save.setCursor(Qt.PointingHandCursor)
-        self.btn_save.setFont(QFont("Inter", 14, QFont.Bold))
         self.btn_save.setStyleSheet(f"""
             QPushButton {{
                 background-color: {Colors.PRIMARY};
@@ -296,12 +315,44 @@ class SettingsPointView(QWidget):
                 background-color: {Colors.PRIMARY_HOVER};
             }}
         """)
+        btn_save_layout = QHBoxLayout(self.btn_save)
+        btn_save_layout.setContentsMargins(10, 0, 10, 0)
+        btn_save_layout.setAlignment(Qt.AlignCenter)
+
+        self.lbl_btn_save_text = QLabel("저장하기", self.btn_save)
+        self.lbl_btn_save_text.setFont(QFont("Inter", 14, QFont.Bold))
+        self.lbl_btn_save_text.setAlignment(Qt.AlignCenter)
+        self.lbl_btn_save_text.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.lbl_btn_save_text.setStyleSheet("color: #FFFFFF; background: transparent; border: none;")
+        btn_save_layout.addWidget(self.lbl_btn_save_text)
+
         self.btn_save.clicked.connect(self.save_point_rates)
 
         center_layout.addWidget(self.btn_save)
         main_layout.addWidget(center_container)
 
         main_layout.addStretch(1)
+
+    def set_save_button_dirty(self, is_dirty: bool):
+        """변경 사항 존재 여부에 따라 저장하기 버튼 텍스트에 빨간색 * 표시"""
+        if is_dirty:
+            self.lbl_btn_save_text.setText(
+                "저장하기 <span style='color:#FF4D4F; font-weight:bold;'>*</span>"
+            )
+        else:
+            self.lbl_btn_save_text.setText("저장하기")
+
+    def check_rates_modified(self):
+        """현재 입력된 적립 비율이 초기 로드/저장된 값과 다른지 확인"""
+        if self.original_rates is None:
+            self.set_save_button_dirty(False)
+            return
+
+        current_rates = (
+            self.spn_general.current_display_value(),
+            self.spn_prepaid.current_display_value(),
+        )
+        self.set_save_button_dirty(current_rates != self.original_rates)
 
     def load_point_rates(self):
         """DB에서 설정값 조회 (기본값: 일반 10%, 선결제 20%)"""
@@ -321,8 +372,14 @@ class SettingsPointView(QWidget):
         self.spn_general.setValue(general_val)
         self.spn_prepaid.setValue(prepaid_val)
 
+        self.original_rates = (general_val, prepaid_val)
+        self.set_save_button_dirty(False)
+
     def save_point_rates(self):
         """[저장하기] 버튼 클릭 시 입력값 DB 저장"""
+        self.spn_general._on_editing_finished()
+        self.spn_prepaid._on_editing_finished()
+
         general_val = self.spn_general.value()
         prepaid_val = self.spn_prepaid.value()
 
@@ -334,6 +391,8 @@ class SettingsPointView(QWidget):
         res_prepaid = self.db_manager.set_setting(self.KEY_PREPAID_RATE, str(prepaid_val))
 
         if res_general and res_prepaid:
+            self.original_rates = (general_val, prepaid_val)
+            self.set_save_button_dirty(False)
             CustomAlertDialog("저장 완료", "포인트 적립 비율이 성공적으로 저장되었습니다.", self).exec()
         else:
             CustomAlertDialog("저장 실패", "포인트 적립 비율 저장 중 오류가 발생했습니다.", self).exec()

@@ -1,3 +1,4 @@
+import os
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
@@ -5,9 +6,33 @@ from PySide6.QtWidgets import (
     QTextEdit, QProgressBar, QToolTip, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QTextDocument, QCursor
+from PySide6.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QTextDocument, QCursor, QPixmap
 from ui.theme import Colors, get_icon
 from core.db_manager import DBManager
+
+
+def get_checkmark_icon_path() -> str:
+    """프로젝트 루트의 resources 폴더에 흰색 체크(✓) PNG 아이콘을 생성하고 절대 경로 반환"""
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    res_dir = os.path.join(project_root, "resources")
+    os.makedirs(res_dir, exist_ok=True)
+
+    file_path = os.path.join(res_dir, "check_white.png")
+    if not os.path.exists(file_path):
+        pixmap = QPixmap(24, 24)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor("#FFFFFF"), 2.6)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.drawLine(5, 12, 10, 17)
+        painter.drawLine(10, 17, 19, 7)
+        painter.end()
+        pixmap.save(file_path, "PNG")
+
+    return file_path.replace("\\", "/")
 
 
 SCROLLBAR_STYLE = """
@@ -145,13 +170,25 @@ class CustomConsentDialog(QDialog):
         i_layout.addWidget(lbl_terms)
         c_layout.addWidget(info_box)
 
+        check_icon_path = get_checkmark_icon_path()
+
         self.chk_consent = QCheckBox(" [필수] 개인정보 수집 및 이용에 동의합니다.", container)
         self.chk_consent.setFont(QFont("Inter", 11, QFont.Bold))
         self.chk_consent.setCursor(Qt.PointingHandCursor)
         self.chk_consent.setStyleSheet(f"""
             QCheckBox {{ color: #000000; border: none; background: transparent; font-weight: bold; }}
-            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; border: 1px solid #A0A0A0; }}
-            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 1.5px solid #A0A0A0;
+                background-color: #FFFFFF;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {Colors.PRIMARY};
+                border-color: {Colors.PRIMARY};
+                image: url("{check_icon_path}");
+            }}
         """)
         c_layout.addWidget(self.chk_consent)
 
@@ -160,8 +197,18 @@ class CustomConsentDialog(QDialog):
         self.chk_marketing.setCursor(Qt.PointingHandCursor)
         self.chk_marketing.setStyleSheet(f"""
             QCheckBox {{ color: #00594C; border: none; background: transparent; font-weight: bold; }}
-            QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 4px; border: 1px solid #A0A0A0; }}
-            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                border-radius: 4px;
+                border: 1.5px solid #A0A0A0;
+                background-color: #FFFFFF;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {Colors.PRIMARY};
+                border-color: {Colors.PRIMARY};
+                image: url("{check_icon_path}");
+            }}
         """)
         c_layout.addWidget(self.chk_marketing)
 
@@ -400,6 +447,7 @@ class CustomerView(QWidget):
         self.db_manager = DBManager()
         self.selected_customer_id = None
         self.all_customers = []
+        self.original_customer_state = None
 
         self.setup_ui()
         self.load_customer_list()
@@ -545,6 +593,7 @@ class CustomerView(QWidget):
             QLabel, QLineEdit {
                 border: none;
                 background: transparent;
+                color: #000000;
             }
         """
 
@@ -704,6 +753,7 @@ class CustomerView(QWidget):
         self.txt_info_name = QLineEdit(f_name)
         self.txt_info_name.setFont(QFont("Inter", 11))
         self.txt_info_name.setAlignment(Qt.AlignRight)
+        self.txt_info_name.textChanged.connect(self.check_customer_modified)
         r_name.addWidget(lbl_name)
         r_name.addWidget(self.txt_info_name, 1)
         left_info_layout.addWidget(f_name)
@@ -718,6 +768,7 @@ class CustomerView(QWidget):
         self.txt_info_phone.setFont(QFont("Inter", 11))
         self.txt_info_phone.setAlignment(Qt.AlignRight)
         self.txt_info_phone.textChanged.connect(lambda t: self.format_phone_number(self.txt_info_phone, t))
+        self.txt_info_phone.textChanged.connect(self.check_customer_modified)
         r_phone.addWidget(lbl_phone)
         r_phone.addWidget(self.txt_info_phone, 1)
         left_info_layout.addWidget(f_phone)
@@ -747,14 +798,27 @@ class CustomerView(QWidget):
         lbl_c_title.setStyleSheet("color: #00594C; border: none; background: transparent;")
         box_c_layout.addWidget(lbl_c_title)
 
+        check_icon_path = get_checkmark_icon_path()
+
         self.chk_info_consent = QCheckBox("[필수] 개인정보 수집 및 이용 동의", f_consent_box)
         self.chk_info_consent.setFont(QFont("Inter", 9.5, QFont.Bold))
         self.chk_info_consent.setCursor(Qt.PointingHandCursor)
         self.chk_info_consent.setStyleSheet(f"""
             QCheckBox {{ color: #111111; border: none; background: transparent; }}
-            QCheckBox::indicator {{ width: 15px; height: 15px; border-radius: 3px; border: 1px solid #A0A0A0; }}
-            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+            QCheckBox::indicator {{
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                border: 1.5px solid #A0A0A0;
+                background-color: #FFFFFF;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {Colors.PRIMARY};
+                border-color: {Colors.PRIMARY};
+                image: url("{check_icon_path}");
+            }}
         """)
+        self.chk_info_consent.stateChanged.connect(self.check_customer_modified)
         box_c_layout.addWidget(self.chk_info_consent)
 
         self.chk_info_marketing = QCheckBox("[선택] 마케팅 활용 및 광고 수신 동의", f_consent_box)
@@ -762,9 +826,20 @@ class CustomerView(QWidget):
         self.chk_info_marketing.setCursor(Qt.PointingHandCursor)
         self.chk_info_marketing.setStyleSheet(f"""
             QCheckBox {{ color: #00594C; border: none; background: transparent; }}
-            QCheckBox::indicator {{ width: 15px; height: 15px; border-radius: 3px; border: 1px solid #A0A0A0; }}
-            QCheckBox::indicator:checked {{ background-color: {Colors.PRIMARY}; border-color: {Colors.PRIMARY}; }}
+            QCheckBox::indicator {{
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
+                border: 1.5px solid #A0A0A0;
+                background-color: #FFFFFF;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {Colors.PRIMARY};
+                border-color: {Colors.PRIMARY};
+                image: url("{check_icon_path}");
+            }}
         """)
+        self.chk_info_marketing.stateChanged.connect(self.check_customer_modified)
         box_c_layout.addWidget(self.chk_info_marketing)
 
         left_info_layout.addWidget(f_consent_box)
@@ -786,8 +861,9 @@ class CustomerView(QWidget):
         self.txt_info_memo = QTextEdit(tab0_right_inner)
         self.txt_info_memo.setPlaceholderText("고객 관련 특이사항 및 메모 입력")
         self.txt_info_memo.setFont(QFont("Inter", 11))
-        self.txt_info_memo.setStyleSheet("border: none; background: transparent;")
+        self.txt_info_memo.setStyleSheet("border: none; background: transparent; color: #000000;")
         self.txt_info_memo.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
+        self.txt_info_memo.textChanged.connect(self.check_customer_modified)
         right_memo_layout.addWidget(self.txt_info_memo, 1)
 
         tab0_outer_layout.addWidget(tab0_right_inner, 1)
@@ -796,10 +872,9 @@ class CustomerView(QWidget):
         btn_action_layout = QHBoxLayout()
         btn_action_layout.setSpacing(10)
 
-        self.btn_update = QPushButton("고객 정보 및 동의 상태 수정", tab0_widget)
+        self.btn_update = QPushButton("", tab0_widget)
         self.btn_update.setFixedHeight(44)
         self.btn_update.setCursor(Qt.PointingHandCursor)
-        self.btn_update.setFont(QFont("Inter", 12, QFont.Bold))
         self.btn_update.setStyleSheet(f"""
             QPushButton {{
                 background-color: {Colors.PRIMARY};
@@ -811,6 +886,17 @@ class CustomerView(QWidget):
                 background-color: {Colors.PRIMARY_HOVER};
             }}
         """)
+        btn_update_layout = QHBoxLayout(self.btn_update)
+        btn_update_layout.setContentsMargins(10, 0, 10, 0)
+        btn_update_layout.setAlignment(Qt.AlignCenter)
+
+        self.lbl_btn_update_text = QLabel("고객 정보 및 동의 상태 수정", self.btn_update)
+        self.lbl_btn_update_text.setFont(QFont("Inter", 12, QFont.Bold))
+        self.lbl_btn_update_text.setAlignment(Qt.AlignCenter)
+        self.lbl_btn_update_text.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.lbl_btn_update_text.setStyleSheet("color: #FFFFFF; background: transparent; border: none;")
+        btn_update_layout.addWidget(self.lbl_btn_update_text)
+
         self.btn_update.clicked.connect(self.update_customer_info)
 
         self.btn_delete = QPushButton("고객 정보 삭제", tab0_widget)
@@ -936,6 +1022,30 @@ class CustomerView(QWidget):
 
         self.switch_detail_tab(0)
 
+    def set_update_button_dirty(self, is_dirty: bool):
+        """수정 사항 존재 여부에 따라 수정 버튼 텍스트에 빨간색 * 표시"""
+        if is_dirty:
+            self.lbl_btn_update_text.setText(
+                "고객 정보 및 동의 상태 수정 <span style='color:#FF4D4F; font-weight:bold;'>*</span>"
+            )
+        else:
+            self.lbl_btn_update_text.setText("고객 정보 및 동의 상태 수정")
+
+    def check_customer_modified(self):
+        """현재 입력된 고객 정보/동의 상태가 초기 로드된 상태와 다른지 확인"""
+        if not self.original_customer_state:
+            self.set_update_button_dirty(False)
+            return
+
+        current_state = {
+            "name": self.txt_info_name.text(),
+            "phone": self.txt_info_phone.text(),
+            "memo": self.txt_info_memo.toPlainText(),
+            "is_consent": self.chk_info_consent.isChecked(),
+            "is_marketing": self.chk_info_marketing.isChecked(),
+        }
+        self.set_update_button_dirty(current_state != self.original_customer_state)
+
     def update_table_column_widths(self):
         total_width = self.table.viewport().width()
         if total_width > 0:
@@ -1043,6 +1153,9 @@ class CustomerView(QWidget):
         line_edit.setText(formatted)
         line_edit.blockSignals(False)
 
+        if line_edit is self.txt_info_phone:
+            self.check_customer_modified()
+
     def load_customer_list(self):
         self.all_customers = self.db_manager.get_all_customers()
         self.filter_customer_list()
@@ -1101,7 +1214,7 @@ class CustomerView(QWidget):
         self.txt_info_name.setText(target_cust["name"])
         self.txt_info_phone.setText(target_cust["phone"])
         self.lbl_info_point.setText(f"{target_cust['point']:,}P")
-        self.txt_info_memo.setText(target_cust["memo"])
+        self.txt_info_memo.setText(target_cust["memo"] or "")
 
         # DB에서 동의 정보 조회 및 체크박스 상태 동기화
         consented_list = self.db_manager.get_consented_customers(query=target_cust["phone"])
@@ -1118,37 +1231,23 @@ class CustomerView(QWidget):
             consent_dialog = CustomConsentDialog(target_cust["name"], target_cust["phone"], self)
             if consent_dialog.exec() == QDialog.Accepted:
                 is_mkt = 1 if consent_dialog.chk_marketing.isChecked() else 0
-                self.update_consent_db(target_cust["id"], is_consent=1, is_marketing=is_mkt)
+                self.db_manager.update_customer_consent(target_cust["id"], is_consent=1, is_marketing_consent=is_mkt)
                 self.chk_info_consent.setChecked(True)
                 self.chk_info_marketing.setChecked(is_mkt == 1)
+
+        # 초기 상태 스냅샷 저장 및 수정 표시 초기화
+        self.original_customer_state = {
+            "name": self.txt_info_name.text(),
+            "phone": self.txt_info_phone.text(),
+            "memo": self.txt_info_memo.toPlainText(),
+            "is_consent": self.chk_info_consent.isChecked(),
+            "is_marketing": self.chk_info_marketing.isChecked(),
+        }
+        self.set_update_button_dirty(False)
 
         self.right_stack.setCurrentIndex(1)
         self.page_changed.emit(True)
         self.load_customer_stats(self.selected_customer_id)
-
-    def update_consent_db(self, customer_id: int, is_consent: int, is_marketing: int):
-        """DB에 동의 정보를 직접 반영하는 헬퍼 메서드"""
-        conn = self.db_manager.get_connection()
-        cursor = conn.cursor()
-        try:
-            from datetime import datetime
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            c_time = now_str if is_consent == 1 else None
-            m_time = now_str if is_marketing == 1 else None
-
-            cursor.execute("""
-                UPDATE customer
-                SET is_consent = ?, consent_at = ?,
-                    is_marketing_consent = ?, marketing_consent_at = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND is_active = 1
-            """, (is_consent, c_time, is_marketing, m_time, customer_id))
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            print(f"[DB Error] update_consent_db: {e}")
-        finally:
-            conn.close()
 
     def reselect_customer(self, customer_id: int):
         for row in range(self.table.rowCount()):
@@ -1244,6 +1343,8 @@ class CustomerView(QWidget):
 
     def reset_form(self):
         self.selected_customer_id = None
+        self.original_customer_state = None
+        self.set_update_button_dirty(False)
         self.table.clearSelection()
 
         self.txt_reg_name.clear()
@@ -1311,7 +1412,7 @@ class CustomerView(QWidget):
         # 2. 동의 상태 체크박스 변경사항 DB 업데이트
         is_c = 1 if self.chk_info_consent.isChecked() else 0
         is_m = 1 if self.chk_info_marketing.isChecked() else 0
-        self.update_consent_db(target_id, is_consent=is_c, is_marketing=is_m)
+        self.db_manager.update_customer_consent(target_id, is_consent=is_c, is_marketing_consent=is_m)
 
         if success:
             CustomAlertDialog("수정 완료", f"'{name}' 고객의 정보 및 동의 상태가 수정되었습니다.", self).exec()

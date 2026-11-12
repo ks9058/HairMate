@@ -205,6 +205,7 @@ class SettingsDesignerView(QWidget):
         self.db_manager = DBManager()
         self.selected_user_id = None
         self.all_designers = []
+        self.original_designer_state = None
 
         self.setup_ui()
         self.load_designer_list()
@@ -432,6 +433,7 @@ class SettingsDesignerView(QWidget):
                 padding: 0px;
             }
         """)
+        self.txt_name.textChanged.connect(self.check_designer_modified)
 
         row_name.addWidget(lbl_name)
         row_name.addWidget(self.txt_name, 1)
@@ -503,6 +505,7 @@ class SettingsDesignerView(QWidget):
                 padding: 0px;
             }
         """)
+        self.txt_position.textChanged.connect(self.check_designer_modified)
 
         row_position.addWidget(lbl_position)
         row_position.addWidget(self.txt_position, 1)
@@ -512,10 +515,9 @@ class SettingsDesignerView(QWidget):
         right_layout.addWidget(right_outer)
 
         # 2.4 하단 버튼 그룹
-        self.btn_submit = QPushButton("등록하기", right_container)
+        self.btn_submit = QPushButton("", right_container)
         self.btn_submit.setFixedHeight(48)
         self.btn_submit.setCursor(Qt.PointingHandCursor)
-        self.btn_submit.setFont(QFont("Inter", 13, QFont.Bold))
         self.btn_submit.setStyleSheet(f"""
             QPushButton {{
                 background-color: {Colors.PRIMARY};
@@ -527,6 +529,17 @@ class SettingsDesignerView(QWidget):
                 background-color: {Colors.PRIMARY_HOVER};
             }}
         """)
+        btn_submit_layout = QHBoxLayout(self.btn_submit)
+        btn_submit_layout.setContentsMargins(10, 0, 10, 0)
+        btn_submit_layout.setAlignment(Qt.AlignCenter)
+
+        self.lbl_btn_submit_text = QLabel("등록하기", self.btn_submit)
+        self.lbl_btn_submit_text.setFont(QFont("Inter", 13, QFont.Bold))
+        self.lbl_btn_submit_text.setAlignment(Qt.AlignCenter)
+        self.lbl_btn_submit_text.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.lbl_btn_submit_text.setStyleSheet("color: #FFFFFF; background: transparent; border: none;")
+        btn_submit_layout.addWidget(self.lbl_btn_submit_text)
+
         self.btn_submit.clicked.connect(self.save_designer)
 
         self.btn_delete = QPushButton("직원 정보 삭제하기", right_container)
@@ -560,6 +573,30 @@ class SettingsDesignerView(QWidget):
         right_layout.addStretch(1)
 
         main_layout.addWidget(right_container, 2)
+
+    def set_submit_button_dirty(self, is_dirty: bool):
+        """수정 모드에서 변경 사항 존재 여부에 따라 버튼 텍스트에 빨간색 * 표시"""
+        if self.selected_user_id is None:
+            self.lbl_btn_submit_text.setText("등록하기")
+        elif is_dirty:
+            self.lbl_btn_submit_text.setText(
+                "직원 정보 수정하기 <span style='color:#FF4D4F; font-weight:bold;'>*</span>"
+            )
+        else:
+            self.lbl_btn_submit_text.setText("직원 정보 수정하기")
+
+    def check_designer_modified(self):
+        """현재 입력된 직원 정보가 초기 로드된 상태와 다른지 확인"""
+        if self.selected_user_id is None or not self.original_designer_state:
+            self.set_submit_button_dirty(False)
+            return
+
+        current_state = {
+            "name": self.txt_name.text(),
+            "phone": self.txt_phone.text(),
+            "position": self.txt_position.text(),
+        }
+        self.set_submit_button_dirty(current_state != self.original_designer_state)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -610,6 +647,8 @@ class SettingsDesignerView(QWidget):
         self.txt_phone.blockSignals(True)
         self.txt_phone.setText(formatted)
         self.txt_phone.blockSignals(False)
+
+        self.check_designer_modified()
 
     def load_designer_list(self):
         """DB에서 활성 직원의 목록을 불러와 저장 및 실시간 검색 필터 적용"""
@@ -668,21 +707,28 @@ class SettingsDesignerView(QWidget):
         self.txt_phone.setText(phone)
         self.txt_position.setText(position)
 
+        self.original_designer_state = {
+            "name": self.txt_name.text(),
+            "phone": self.txt_phone.text(),
+            "position": self.txt_position.text(),
+        }
+
         self.lbl_form_title.setText("직원 정보 수정")
-        self.btn_submit.setText("직원 정보 수정하기")
+        self.set_submit_button_dirty(False)
         self.btn_delete.setVisible(True)
         self.btn_reset.setVisible(True)
 
     def reset_form(self):
         """신규 등록 모드로 전환"""
         self.selected_user_id = None
+        self.original_designer_state = None
         self.table.clearSelection()
         self.txt_name.clear()
         self.txt_phone.clear()
         self.txt_position.clear()
 
         self.lbl_form_title.setText("신규 직원 등록")
-        self.btn_submit.setText("등록하기")
+        self.set_submit_button_dirty(False)
         self.btn_delete.setVisible(False)
         self.btn_reset.setVisible(False)
 
