@@ -1,5 +1,9 @@
-import os.path
-from datetime import datetime
+import os
+import time
+import subprocess
+import webbrowser
+from datetime import datetime, timezone, timedelta
+from wsgiref.simple_server import make_server, WSGIRequestHandler
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -7,6 +11,52 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
+KST = timezone(timedelta(hours=9))
+
+POPUP_WINDOW_TITLE = "HairMate 구글 인증 완료"
+
+AUTO_CLOSE_HTML = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <title>{POPUP_WINDOW_TITLE}</title>
+    <style>
+        body {{
+            font-family: 'Malgun Gothic', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #F8F9FA;
+            color: #222222;
+        }}
+        .card {{
+            text-align: center;
+            padding: 30px 40px;
+            background: #FFFFFF;
+            border-radius: 12px;
+            border: 1px solid #DCDCDC;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>로그인이 완료되었습니다.</h2>
+        <p>잠시 후 창이 자동으로 닫힙니다.</p>
+    </div>
+    <script>
+        window.close();
+    </script>
+</body>
+</html>
+"""
+
+
+class _QuietWSGIHandler(WSGIRequestHandler):
+    def log_message(self, format, *args):
+        pass
+
 
 class GoogleDriveService:
     """OAuth 2.0 및 Google Drive API v3 연동 서비스"""
@@ -28,7 +78,7 @@ class GoogleDriveService:
         if self.creds and self.creds.expired and self.creds.refresh_token:
             try:
                 self.creds.refresh(Request())
-                with open(self.token_file, 'w') as token:
+                with open(self.token_file, 'w', encoding='utf-8') as token:
                     token.write(self.creds.to_json())
             except Exception:
                 self.creds = None
@@ -37,22 +87,131 @@ class GoogleDriveService:
         """인증 완료 및 토큰 유효 여부 확인"""
         return self.creds is not None and self.creds.valid
 
-    def authenticate(self) -> bool:
-            """브라우저를 열어 구글 OAuth 2.0 로그인 진행"""
-            try:
-                if not os.path.exists(self.client_secret_file):
-                    raise FileNotFoundError(f"{self.client_secret_file} 파일이 필요합니다.")
+    @staticmethod
+    def _convert_utc_to_kst(utc_str: str) -> str:
+        """Google Drive UTC 시간 문자열을 한국 시간(KST, UTC+9)으로 변환"""
+        if not utc_str:
+            return utc_str
+        try:
+            dt_utc = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+            dt_kst = dt_utc.astimezone(KST)
+            return dt_kst.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        except Exception:
+            return utc_str
 
-                flow = InstalledAppFlow.from_client_secrets_file(self.client_secret_file, SCOPES)
-                # prompt='select_account consent'로 계정 선택창 및 동의 화면 강제 출력
-                self.creds = flow.run_local_server(port=0, prompt='select_account consent')
-                
-                with open(self.token_file, 'w') as token:
-                    token.write(self.creds.to_json())
+    def _open_auth_popup(self, auth_url: str):
+        """브라우저 앱 팝업 모드로 우선 실행"""
+        browser_candidates = [
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]
+        for exe_path in browser_candidates:
+            if os.path.exists(exe_path):
+                try:
+                    subprocess.Popen([
+                        exe_path,
+                        f"--app={auth_url}",
+                        "--window-size=520,680"
+                    ])
+                    return
+                except Exception:
+                    pass
+        webbrowser.open(auth_url)
+
+    def _close_auth_popup_window(self):
+        """Windows API(WM_CLOSE)로 인증 완료 팝업 창 닫기"""
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            WM_CLOSE = 0x0010
+
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+            def enum_cb(hwnd, lparam):
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buff, length + 1)
+                    if POPUP_WINDOW_TITLE in buff.value:
+                        user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
                 return True
-            except Exception as e:
-                print(f"[Google Auth Error] {e}")
-                return False
+
+            user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+        except Exception as e:
+            print(f"[Close Auth Popup Warning] {e}")
+
+    def authenticate(self) -> bool:
+        """브라우저를 열어 구글 OAuth 2.0 로그인 진행 후 창 자동 닫기"""
+        try:
+            if not os.path.exists(self.client_secret_file):
+                raise FileNotFoundError(f"{self.client_secret_file} 파일이 필요합니다.")
+
+            os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+            os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+            flow = InstalledAppFlow.from_client_secrets_file(self.client_secret_file, SCOPES)
+
+            callback_data = {"url": None}
+
+            def wsgi_app(environ, start_response):
+                path = environ.get("PATH_INFO", "/")
+                query = environ.get("QUERY_STRING", "")
+
+                if path == "/favicon.ico":
+                    start_response("404 Not Found", [("Content-Type", "text/plain")])
+                    return [b""]
+
+                if "code=" in query or "error=" in query:
+                    port = environ.get("SERVER_PORT")
+                    callback_data["url"] = f"http://localhost:{port}{path}?{query}"
+
+                start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
+                return [AUTO_CLOSE_HTML.encode("utf-8")]
+
+            server = make_server("localhost", 0, wsgi_app, handler_class=_QuietWSGIHandler)
+            server.timeout = 120
+            flow.redirect_uri = f"http://localhost:{server.server_port}/"
+
+            auth_url, _ = flow.authorization_url(
+                prompt="select_account consent",
+                access_type="offline"
+            )
+            self._open_auth_popup(auth_url)
+
+            while callback_data["url"] is None:
+                server.handle_request()
+
+            server.server_close()
+
+            time.sleep(0.5)
+            self._close_auth_popup_window()
+
+            if "error=" in callback_data["url"]:
+                raise RuntimeError(f"OAuth 인증 거부 또는 오류: {callback_data['url']}")
+
+            flow.fetch_token(authorization_response=callback_data["url"])
+            self.creds = flow.credentials
+
+            with open(self.token_file, 'w', encoding='utf-8') as token:
+                token.write(self.creds.to_json())
+
+            try:
+                from PySide6.QtWidgets import QApplication
+                win = QApplication.activeWindow() or (
+                    QApplication.topLevelWidgets()[0] if QApplication.topLevelWidgets() else None
+                )
+                if win:
+                    win.showNormal()
+                    win.raise_()
+                    win.activateWindow()
+            except Exception:
+                pass
+
+            return True
+        except Exception as e:
+            print(f"[Google Auth Error] {e}")
+            return False
 
     def get_account_info(self) -> dict:
         """연동된 구글 계정 이메일 및 사용자 정보 조회"""
@@ -156,7 +315,7 @@ class GoogleDriveService:
         return file
 
     def list_backups(self) -> list:
-        """현재 월 폴더 내부의 백업 파일 목록 조회 (당일 순번 계산용)"""
+        """현재 월 폴더 내부의 백업 파일 목록 조회 (한국 시간 변환 적용)"""
         if not self.is_authenticated():
             if not self.authenticate():
                 return []
@@ -168,31 +327,39 @@ class GoogleDriveService:
         except Exception:
             return []
 
-        query = f"'{target_folder_id}' in parents and name contains 'HairMate_Backup' and trashed = false"
+        query = f"'{target_folder_id}' in parents and (name contains 'HairMate_백업' or name contains '헤어메이트_백업' or name contains 'HairMate_Backup') and trashed = false"
         results = service.files().list(
             q=query,
             fields="files(id, name, size, createdTime)",
             orderBy="createdTime desc"
         ).execute()
 
-        return results.get('files', [])
+        files = results.get('files', [])
+        for f in files:
+            if 'createdTime' in f:
+                f['createdTime'] = self._convert_utc_to_kst(f['createdTime'])
+        return files
 
     def list_all_backups(self) -> list:
-        """HairMate 백업 파일 전체 목록 조회 (복원 뷰 바인딩용)"""
+        """백업 파일 전체 목록 조회 (복원 뷰 바인딩용, 한국 시간 변환 적용)"""
         if not self.is_authenticated():
             if not self.authenticate():
                 return []
 
         service = build('drive', 'v3', credentials=self.creds)
 
-        query = "name contains 'HairMate_Backup' and name contains '.enc' and trashed = false"
+        query = "(name contains 'HairMate_백업' or name contains '헤어메이트_백업' or name contains 'HairMate_Backup') and name contains '.enc' and trashed = false"
         results = service.files().list(
             q=query,
             fields="files(id, name, size, createdTime)",
             orderBy="createdTime desc"
         ).execute()
 
-        return results.get('files', [])
+        files = results.get('files', [])
+        for f in files:
+            if 'createdTime' in f:
+                f['createdTime'] = self._convert_utc_to_kst(f['createdTime'])
+        return files
 
     def download_backup(self, file_id: str, dest_path: str) -> bool:
         """선택한 백업 파일을 구글 드라이브에서 로컬로 다운로드"""
@@ -209,3 +376,16 @@ class GoogleDriveService:
             while not done:
                 status, done = downloader.next_chunk()
         return True
+
+    def delete_backup(self, file_id: str) -> bool:
+        """구글 드라이브에서 지정한 백업 파일 영구 삭제"""
+        if not self.is_authenticated():
+            return False
+
+        try:
+            service = build('drive', 'v3', credentials=self.creds)
+            service.files().delete(fileId=file_id).execute()
+            return True
+        except Exception as e:
+            print(f"[Google Delete Backup Error] {e}")
+            return False

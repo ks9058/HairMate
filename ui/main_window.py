@@ -1,10 +1,12 @@
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
-    QPushButton, QLabel, QStackedWidget, QFrame, QSizePolicy
+    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
+    QPushButton, QLabel, QStackedWidget, QFrame, QSizePolicy,
+    QDialog, QProgressBar
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QThread, Signal, QTimer
 from PySide6.QtGui import QFont
+from core.backup_manager import BackupManager
 from ui.theme import Colors, Styles, get_icon, load_fonts
 from ui.customer_view import CustomerView
 from ui.sales_registration_view import SalesRegistrationView
@@ -14,10 +16,121 @@ from ui.settings_google_view import SettingsGoogleView
 from ui.settings_category_view import SettingsCategoryView
 from ui.settings_point_view import SettingsPointView  
 from ui.settings_designer_view import SettingsDesignerView
-from ui.settings_backup import SettingsBackupView
-from ui.settings_restore import SettingsRestoreView
+from ui.settings_backup_restore import SettingsBackupRestoreView
 from ui.settings_consent_view import SettingsConsentView
-from ui.settings_csv_export_view import SettingsCsvExportView  # 💡 [추가] CSV 내보내기 뷰 임포트
+from ui.settings_csv_export_view import SettingsCsvExportView
+
+
+class AutoBackupExitWorker(QThread):
+    """프로그램 종료 시 자동 백업 및 Google Drive 업로드를 수행하는 스레드"""
+    finished_signal = Signal(bool, str)
+
+    def __init__(self, db_path: str = None, parent=None):
+        super().__init__(parent)
+        self.db_path = db_path
+
+    def run(self):
+        try:
+            backup_mgr = BackupManager(db_path=self.db_path)
+            success, msg = backup_mgr.run_auto_backup()
+            self.finished_signal.emit(success, msg)
+        except Exception as e:
+            self.finished_signal.emit(False, f"자동 백업 중 오류 발생: {e}")
+
+
+class ExitAutoBackupDialog(QDialog):
+    """프로그램 종료 및 자동 백업 업로드 진행 안내 모달창"""
+
+    def __init__(self, db_path: str = None, parent=None):
+        super().__init__(parent)
+        self.db_path = db_path
+        self._worker_done = False
+
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setModal(True)
+        self.setFixedSize(430, 215)
+
+        self._setup_ui()
+        self._start_auto_backup()
+
+    def _setup_ui(self):
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(6, 6, 6, 6)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1.5px solid #C0C0C0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(28, 26, 28, 26)
+        c_layout.setSpacing(14)
+
+        self.lbl_title = QLabel("프로그램 종료 중...", container)
+        self.lbl_title.setFont(QFont("Inter", 15, QFont.Weight.Bold))
+        self.lbl_title.setAlignment(Qt.AlignCenter)
+        self.lbl_title.setStyleSheet("border: none; background: transparent; color: #000000;")
+        c_layout.addWidget(self.lbl_title)
+
+        self.lbl_desc = QLabel(
+            "안전한 데이터 보관을 위해 자동 백업을 생성하고\nGoogle Drive에 자동으로 업로드하고 있습니다.",
+            container
+        )
+        self.lbl_desc.setFont(QFont("Inter", 11, QFont.Weight.Bold))
+        self.lbl_desc.setAlignment(Qt.AlignCenter)
+        self.lbl_desc.setWordWrap(True)
+        self.lbl_desc.setStyleSheet("border: none; background: transparent; color: #333333;")
+        c_layout.addWidget(self.lbl_desc)
+
+        self.progress_bar = QProgressBar(container)
+        self.progress_bar.setFixedSize(320, 10)
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                border: none;
+                background-color: #E0E0E0;
+                border-radius: 5px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {Colors.PRIMARY};
+                border-radius: 5px;
+            }}
+        """)
+        c_layout.addSpacing(4)
+        c_layout.addWidget(self.progress_bar, 0, Qt.AlignCenter)
+
+        outer_layout.addWidget(container)
+
+    def _start_auto_backup(self):
+        self.worker = AutoBackupExitWorker(db_path=self.db_path, parent=self)
+        self.worker.finished_signal.connect(self._on_backup_finished)
+        self.worker.start()
+
+    def _on_backup_finished(self, success: bool, msg: str):
+        self._worker_done = True
+        self.worker.wait(2000)
+        print(f"[Auto Backup on Exit] {success}: {msg}")
+
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100)
+
+        self.lbl_title.setText("종료 준비 완료")
+        color = Colors.PRIMARY if success else "#E53E3E"
+        self.lbl_desc.setStyleSheet(f"border: none; background: transparent; color: {color};")
+        self.lbl_desc.setText(f"{msg}\n잠시 후 프로그램이 자동으로 종료됩니다.")
+
+        QTimer.singleShot(600, self.accept)
+
+    def closeEvent(self, event):
+        if not self._worker_done:
+            event.ignore()
+        else:
+            super().closeEvent(event)
 
 
 class SidebarButton(QPushButton):
@@ -82,6 +195,8 @@ class MainWindow(QMainWindow):
     """HairMate 메인 대시보드 윈도우"""
     def __init__(self):
         super().__init__()
+        self._is_closing_with_backup = False
+        self._backup_in_progress = False
         self.setup_ui()
 
     def setup_ui(self):
@@ -154,9 +269,8 @@ class MainWindow(QMainWindow):
         self.btn_sub_designer = SidebarButton("디자이너 관리", is_sub=True)
         self.btn_sub_category = SidebarButton("시술 카테고리 관리", is_sub=True)
         self.btn_sub_consent = SidebarButton("동의서 출력", is_sub=True)
-        self.btn_sub_csv = SidebarButton("CSV 내보내기", is_sub=True)  # 💡 [추가] CSV 내보내기 버튼 생성
-        self.btn_sub_backup = SidebarButton("백업", is_sub=True)
-        self.btn_sub_restore = SidebarButton("복원", is_sub=True)
+        self.btn_sub_csv = SidebarButton("CSV 내보내기", is_sub=True)
+        self.btn_sub_backup_restore = SidebarButton("백업 및 복원", is_sub=True)
 
         self.sub_buttons = [
             self.btn_sub_google, 
@@ -164,9 +278,8 @@ class MainWindow(QMainWindow):
             self.btn_sub_designer, 
             self.btn_sub_category,
             self.btn_sub_consent, 
-            self.btn_sub_csv,  # 💡 [추가] 서브 버튼 목록에 포함
-            self.btn_sub_backup, 
-            self.btn_sub_restore
+            self.btn_sub_csv,
+            self.btn_sub_backup_restore
         ]
 
         for btn in self.sub_buttons:
@@ -255,16 +368,13 @@ class MainWindow(QMainWindow):
         self.category_setting_page = SettingsCategoryView()
         self.stack.addWidget(self.category_setting_page)
 
-        self.backup_setting_page = SettingsBackupView()
-        self.stack.addWidget(self.backup_setting_page)
-
-        self.restore_setting_page = SettingsRestoreView()
-        self.stack.addWidget(self.restore_setting_page)
+        self.backup_restore_setting_page = SettingsBackupRestoreView()
+        self.stack.addWidget(self.backup_restore_setting_page)
 
         self.consent_setting_page = SettingsConsentView()
         self.stack.addWidget(self.consent_setting_page)
 
-        self.csv_export_setting_page = SettingsCsvExportView()  # 💡 [추가] CSV 내보내기 뷰 인스턴스화
+        self.csv_export_setting_page = SettingsCsvExportView()
         self.stack.addWidget(self.csv_export_setting_page)
 
         self.btn_top_back.clicked.connect(self.handle_top_back_click)
@@ -361,14 +471,45 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentWidget(self.designer_setting_page)
         elif target_btn == self.btn_sub_category:
             self.stack.setCurrentWidget(self.category_setting_page)
-        elif target_btn == self.btn_sub_backup:
-            self.backup_setting_page.load_last_backup_date()
-            self.stack.setCurrentWidget(self.backup_setting_page)
-        elif target_btn == self.btn_sub_restore:
-            self.restore_setting_page.load_backup_list()
-            self.stack.setCurrentWidget(self.restore_setting_page)
+        elif target_btn == self.btn_sub_backup_restore:
+            self.backup_restore_setting_page.refresh_all()
+            self.stack.setCurrentWidget(self.backup_restore_setting_page)
         elif target_btn == self.btn_sub_consent:
             self.consent_setting_page.load_customer_data()
             self.stack.setCurrentWidget(self.consent_setting_page)
         elif target_btn == self.btn_sub_csv:  
             self.stack.setCurrentWidget(self.csv_export_setting_page)
+
+    def _finalize_exit(self):
+        """백업 모달 종료 후 다음 이벤트 루프에서 메인 창 및 앱 완전 종료"""
+        self._is_closing_with_backup = True
+        self.close()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def closeEvent(self, event):
+        """프로그램 종료 시 안내 모달창을 띄워 자동 백업 업로드 후 종료"""
+        if self._is_closing_with_backup:
+            event.accept()
+            super().closeEvent(event)
+            return
+
+        event.ignore()
+
+        if self._backup_in_progress:
+            return
+
+        self._backup_in_progress = True
+
+        db_path = None
+        for attr in ("db_manager", "db"):
+            obj = getattr(self.customer_page, attr, None)
+            if obj and hasattr(obj, "db_path"):
+                db_path = obj.db_path
+                break
+
+        dialog = ExitAutoBackupDialog(db_path=db_path, parent=self)
+        dialog.exec()
+
+        QTimer.singleShot(0, self._finalize_exit)
