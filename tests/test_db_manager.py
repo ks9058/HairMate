@@ -42,7 +42,7 @@ class TestDBManager(unittest.TestCase):
     # 1. DB 초기화 및 설정(Settings) 테스트
     # =========================================================================
     def test_init_db_schema_and_defaults(self):
-        """[정상/경계] 9개 테이블 생성, 기본 설정값 및 init_db 중복 호출 멱등성 검증"""
+        """[정상/경계] 10개 테이블 생성, 기본 설정값 및 init_db 중복 호출 멱등성 검증"""
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
@@ -50,7 +50,8 @@ class TestDBManager(unittest.TestCase):
 
         expected_tables = {
             "customer", "user", "category", "service",
-            "visit", "visit_service", "payment", "point_history", "settings"
+            "visit", "visit_service", "payment",
+            "point_history", "prepaid_history", "settings"
         }
         self.assertTrue(expected_tables.issubset(tables))
 
@@ -97,6 +98,7 @@ class TestDBManager(unittest.TestCase):
         self.assertEqual(len(customers), 2)
         c1 = next(c for c in customers if c["name"] == "김지민")
         c2 = next(c for c in customers if c["name"] == "이수진")
+        self.assertEqual(c1["prepaid_balance"], 0)
 
         # 경계값: 본인 전화번호 유지하며 메모/이름만 수정 시 허용
         ok_upd1, _ = self.db.update_customer(c1["id"], "김지민(수정)", "010-1234-5678", "염색 선호")
@@ -125,13 +127,17 @@ class TestDBManager(unittest.TestCase):
 
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name, phone, memo, point, is_active FROM customer WHERE id = ?", (c1["id"],))
+            cursor.execute(
+                "SELECT name, phone, memo, point, prepaid_balance, is_active FROM customer WHERE id = ?",
+                (c1["id"],)
+            )
             row = cursor.fetchone()
             self.assertEqual(row[0], "(삭제된 고객)")
             self.assertEqual(row[1], f"000-0000-{c1['id']:04d}")
             self.assertEqual(row[2], "")
             self.assertEqual(row[3], 0)
             self.assertEqual(row[4], 0)
+            self.assertEqual(row[5], 0)
 
         # 경계값: 삭제된 고객과 동일한 전화번호로 신규 고객 재등록 허용 확인
         ok_re, _ = self.db.add_customer("신규김지민", "010-1234-5678")
@@ -205,7 +211,7 @@ class TestDBManager(unittest.TestCase):
         self.assertFalse(self.db.delete_designer("not_an_int"))
 
     # =========================================================================
-    # 5. 매출 결제 등록, 포인트 적립/차감, 방문 통계 및 결제 취소 테스트
+    # 5. 매출 결제 등록, 툴팁 목록, 선결제/포인트 적립·차감 및 결제 취소 테스트
     # =========================================================================
     def _prepare_sale_fixtures(self):
         """결제/통계 테스트용 고객, 디자이너, 시술 2종 사전 생성"""
@@ -226,7 +232,7 @@ class TestDBManager(unittest.TestCase):
         return customer, designer, saved_svcs["펌"]
 
     def test_record_sale_and_cancel_transaction_with_point_guard(self):
-        """[정상/경계] 복합 결제 등록, 방문 통계 집계, 결제 취소 및 포인트 음수 방지 경계값 검증"""
+        """[정상/경계] 복합 결제 등록, 툴팁 목록(시술·결제수단 금액), 결제 취소 및 포인트 음수 방지 검증"""
         customer, designer, services = self._prepare_sale_fixtures()
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -286,18 +292,24 @@ class TestDBManager(unittest.TestCase):
 
         cancel_list = self.db.get_sales_cancel_list(query="홍길동")
         self.assertEqual(len(cancel_list), 2)
+
         # ORDER BY visited_at DESC, v.id DESC 이므로 index 0이 2차 결제, index 1이 1차 결제
-        visit_2_id = cancel_list[0]["visit_id"]
-        visit_1_id = cancel_list[1]["visit_id"]
+        sale_2 = cancel_list[0]
+        sale_1 = cancel_list[1]
+
+        # 툴팁용 시술 목록 및 결제수단별 금액 포맷 검증
+        self.assertEqual(sale_1["services_list"], ["셋팅펌", "클리닉"])
+        self.assertEqual(sale_1["payment_methods_list"], ["카드 : 100,000원", "현금 : 50,000원"])
+        self.assertEqual(sale_2["payment_methods_list"], ["카드 : 35,000원", "포인트 : 15,000P"])
 
         # 경계값 테스트: 이미 15,000P를 다 써서 잔액이 0P인 상태에서 15,000P가 적립됐던 1차 결제를 먼저 취소
         # 잔액이 음수(-15000)가 되지 않고 MAX(0, ...)에 의해 0으로 방어되어야 함
-        ok_c1, _ = self.db.cancel_sale_transaction(visit_1_id)
+        ok_c1, _ = self.db.cancel_sale_transaction(sale_1["visit_id"])
         self.assertTrue(ok_c1)
         self.assertEqual(self.db.get_all_customers()[0]["point"], 0)
 
         # 이어서 15,000P를 사용했던 2차 결제 취소 시 사용 포인트 15,000P 원복 확인
-        ok_c2, _ = self.db.cancel_sale_transaction(visit_2_id)
+        ok_c2, _ = self.db.cancel_sale_transaction(sale_2["visit_id"])
         self.assertTrue(ok_c2)
         self.assertEqual(self.db.get_all_customers()[0]["point"], 15000)
 
@@ -305,6 +317,68 @@ class TestDBManager(unittest.TestCase):
         ok_none, msg_none = self.db.cancel_sale_transaction(999999)
         self.assertFalse(ok_none)
         self.assertIn("존재하지 않는", msg_none)
+
+    def test_prepaid_charge_use_tooltip_and_cancel_restoration(self):
+        """[정상/경계] 선결제 충전·사용, 수량 표기 툴팁, 결제 취소 시 선결제 잔액 원복 검증"""
+        customer, designer, services = self._prepare_sale_fixtures()
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 1. 선결제 100,000원 충전
+        ok_charge = self.db.record_sale(
+            customer_id=customer["id"],
+            user_id=designer["id"],
+            duration_minutes=0,
+            total_amount=100000,
+            used_point=0,
+            earned_point=0,
+            visited_at_str=now_str,
+            memo="선결제 충전",
+            cart_items=[],
+            payments_history=[{"amount": 100000, "method": "카드"}],
+            used_prepaid=0,
+            charged_prepaid=100000
+        )
+        self.assertTrue(ok_charge)
+        self.assertEqual(self.db.get_all_customers()[0]["prepaid_balance"], 100000)
+
+        # 2. 선결제 30,000원 + 카드 70,000원 복합 결제 (클리닉 2개)
+        ok_use = self.db.record_sale(
+            customer_id=customer["id"],
+            user_id=designer["id"],
+            duration_minutes=60,
+            total_amount=100000,
+            used_point=0,
+            earned_point=0,
+            visited_at_str=now_str,
+            memo="선결제 일부 사용",
+            cart_items=[{"id": services[1]["id"], "price": 50000, "qty": 2}],
+            payments_history=[
+                {"amount": 30000, "method": "선결제"},
+                {"amount": 70000, "method": "카드"}
+            ],
+            used_prepaid=30000,
+            charged_prepaid=0
+        )
+        self.assertTrue(ok_use)
+        self.assertEqual(self.db.get_all_customers()[0]["prepaid_balance"], 70000)
+
+        cancel_list = self.db.get_sales_cancel_list(query="홍길동")
+        use_sale = cancel_list[0]
+        charge_sale = cancel_list[1]
+
+        # 수량 표기("클리닉 (2개)") 및 선결제 금액 툴팁 포맷 확인
+        self.assertEqual(use_sale["services_list"], ["클리닉 (2개)"])
+        self.assertEqual(use_sale["payment_methods_list"], ["선결제 : 30,000원", "카드 : 70,000원"])
+
+        # 선결제 사용 건 취소 시 차감된 30,000원 원복 확인 (70,000 -> 100,000)
+        ok_cancel_use, _ = self.db.cancel_sale_transaction(use_sale["visit_id"])
+        self.assertTrue(ok_cancel_use)
+        self.assertEqual(self.db.get_all_customers()[0]["prepaid_balance"], 100000)
+
+        # 선결제 충전 건 취소 시 충전된 100,000원 회수 확인 (100,000 -> 0)
+        ok_cancel_charge, _ = self.db.cancel_sale_transaction(charge_sale["visit_id"])
+        self.assertTrue(ok_cancel_charge)
+        self.assertEqual(self.db.get_all_customers()[0]["prepaid_balance"], 0)
 
     def test_record_sale_rollback_on_invalid_customer(self):
         """[경계] 존재하지 않는 고객 ID로 결제 시 트랜잭션 롤백 보장 검증"""
@@ -336,6 +410,7 @@ class TestDBManager(unittest.TestCase):
         self.assertEqual(empty_daily["today_sales"], 0)
         self.assertEqual(empty_daily["today_customer_spend"], 0)
         self.assertEqual(empty_daily["today_payments"]["card_share"], 0.0)
+        self.assertEqual(empty_daily["today_payments"]["prepaid_share"], 0.0)
 
         today_str = datetime.now().strftime("%Y-%m-%d")
         empty_period = self.db.get_period_sales_analysis(today_str, today_str, designer_id="all")

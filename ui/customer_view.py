@@ -498,7 +498,7 @@ class CustomerView(QWidget):
         table_layout.setContentsMargins(0, 0, 0, 0)
 
         self.table = QTableWidget(table_container)
-        
+
         custom_header = RoundedHeader(Qt.Horizontal, self.table)
         custom_header.setFixedHeight(40)
         self.table.setHorizontalHeader(custom_header)
@@ -549,7 +549,7 @@ class CustomerView(QWidget):
         right_main_layout.setSpacing(10)
 
         self.right_stack = QStackedWidget(self.right_container)
-        
+
         # Page 0: 신규 고객 등록 화면
         page_reg = QWidget()
         page_reg_layout = QVBoxLayout(page_reg)
@@ -604,7 +604,7 @@ class CustomerView(QWidget):
         lbl_name = QLabel("이름<sup style='color:red;'>*</sup> :", frame_name)
         lbl_name.setFont(QFont("Inter", 12, QFont.Bold))
         lbl_name.setStyleSheet("color: #000000; background: transparent;")
-        
+
         self.txt_reg_name = QLineEdit(frame_name)
         self.txt_reg_name.setPlaceholderText("예) 홍길동")
         self.txt_reg_name.setFont(QFont("Inter", 12))
@@ -773,6 +773,19 @@ class CustomerView(QWidget):
         r_phone.addWidget(self.txt_info_phone, 1)
         left_info_layout.addWidget(f_phone)
 
+        f_prepaid = QFrame(tab0_left_inner)
+        f_prepaid.setStyleSheet(row_qss)
+        r_prepaid = QHBoxLayout(f_prepaid)
+        r_prepaid.setContentsMargins(0, 0, 0, 4)
+        lbl_prepaid = QLabel("선결제 :", f_prepaid)
+        lbl_prepaid.setFont(QFont("Inter", 11, QFont.Bold))
+        self.lbl_info_prepaid = QLabel("0원", f_prepaid)
+        self.lbl_info_prepaid.setFont(QFont("Inter", 11, QFont.Bold))
+        self.lbl_info_prepaid.setAlignment(Qt.AlignRight)
+        r_prepaid.addWidget(lbl_prepaid)
+        r_prepaid.addWidget(self.lbl_info_prepaid, 1)
+        left_info_layout.addWidget(f_prepaid)
+
         f_point = QFrame(tab0_left_inner)
         f_point.setStyleSheet(row_qss)
         r_point = QHBoxLayout(f_point)
@@ -935,7 +948,7 @@ class CustomerView(QWidget):
         t_v_layout.setContentsMargins(0, 0, 0, 0)
 
         self.visit_table = QTableWidget(table_v_container)
-        
+
         v_custom_header = RoundedHeader(Qt.Horizontal, self.visit_table)
         v_custom_header.setFixedHeight(36)
         self.visit_table.setHorizontalHeader(v_custom_header)
@@ -943,7 +956,7 @@ class CustomerView(QWidget):
         self.visit_table.setColumnCount(5)
         self.visit_table.setHorizontalHeaderLabels(["고객이름", "결제일", "결제금액", "시술", "시술자"])
         self.visit_table.setFixedHeight(150)
-        
+
         self.visit_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.visit_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.visit_table.verticalHeader().setVisible(False)
@@ -981,7 +994,7 @@ class CustomerView(QWidget):
         pref_layout = QVBoxLayout(pref_card)
         pref_layout.setContentsMargins(15, 12, 15, 12)
         pref_layout.setSpacing(10)
-        
+
         lbl_pref_title = QLabel("시술 선호도 분석\n", pref_card)
         lbl_pref_title.setFont(QFont("Inter", 12, QFont.Bold))
         lbl_pref_title.setStyleSheet("color: #000000; border: none; background: transparent;")
@@ -1210,9 +1223,12 @@ class CustomerView(QWidget):
 
         self.selected_customer_id = int(cust_id)
 
+        prepaid_amount = target_cust.get("prepaid_balance", 0)
+
         self.lbl_info_id.setText(str(target_cust["id"]))
         self.txt_info_name.setText(target_cust["name"])
         self.txt_info_phone.setText(target_cust["phone"])
+        self.lbl_info_prepaid.setText(f"{prepaid_amount:,}원")
         self.lbl_info_point.setText(f"{target_cust['point']:,}P")
         self.txt_info_memo.setText(target_cust["memo"] or "")
 
@@ -1270,7 +1286,7 @@ class CustomerView(QWidget):
         self.visit_table.setRowCount(0)
         for idx, item in enumerate(history):
             self.visit_table.insertRow(idx)
-            
+
             details = item.get("service_details", [])
             if details:
                 detail_lines = [f"• {d['name']}: {d['count']}개" for d in details]
@@ -1330,7 +1346,7 @@ class CustomerView(QWidget):
                 tooltip_text = f"[{cat_name}] 총 {cnt}회 결제"
 
             bar_color = self.CATEGORY_COLORS.get(cat_name, self.DEFAULT_COLORS[idx % len(self.DEFAULT_COLORS)])
-            
+
             row_widget = PreferenceBarRow(
                 cat_name=cat_name,
                 cnt=cnt,
@@ -1347,6 +1363,8 @@ class CustomerView(QWidget):
         self.set_update_button_dirty(False)
         self.table.clearSelection()
 
+        self.lbl_info_prepaid.setText("0원")
+        self.lbl_info_point.setText("0P")
         self.txt_reg_name.clear()
         self.txt_reg_phone.clear()
         self.txt_reg_memo.clear()
@@ -1405,16 +1423,16 @@ class CustomerView(QWidget):
             return
 
         target_id = int(self.selected_customer_id)
-        
+
         # 1. 기본 고객 정보 수정
         success, err_msg = self.db_manager.update_customer(target_id, name, phone, memo)
-        
-        # 2. 동의 상태 체크박스 변경사항 DB 업데이트
-        is_c = 1 if self.chk_info_consent.isChecked() else 0
-        is_m = 1 if self.chk_info_marketing.isChecked() else 0
-        self.db_manager.update_customer_consent(target_id, is_consent=is_c, is_marketing_consent=is_m)
 
         if success:
+            # 2. 동의 상태 체크박스 변경사항 DB 업데이트
+            is_c = 1 if self.chk_info_consent.isChecked() else 0
+            is_m = 1 if self.chk_info_marketing.isChecked() else 0
+            self.db_manager.update_customer_consent(target_id, is_consent=is_c, is_marketing_consent=is_m)
+
             CustomAlertDialog("수정 완료", f"'{name}' 고객의 정보 및 동의 상태가 수정되었습니다.", self).exec()
             self.load_customer_list()
             self.reselect_customer(target_id)

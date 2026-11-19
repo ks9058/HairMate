@@ -9,6 +9,7 @@ from PySide6.QtGui import QFont
 from ui.theme import Colors
 from core.db_manager import DBManager
 
+
 class CustomAlertDialog(QDialog):
     """HairMate 테마가 적용된 안내 알림 팝업"""
     def __init__(self, title: str, message: str, parent=None):
@@ -132,7 +133,7 @@ class SettingsCsvExportView(QWidget):
         lbl_c1_title.setStyleSheet(f"color: {Colors.PRIMARY}; border: none;")
 
         lbl_c1_desc = QLabel(
-            "• 고객 번호, 성명, 전화번호, 보유 포인트\n"
+            "• 고객 번호, 성명, 전화번호, 선결제 잔액, 보유 포인트\n"
             "• 개인정보 수집 필수 동의 여부 및 일시\n"
             "• 마케팅 활용 선택 동의 여부 및 일시\n"
             "• 고객 메모 및 최초 등록일자",
@@ -182,8 +183,8 @@ class SettingsCsvExportView(QWidget):
         lbl_c2_desc = QLabel(
             "• 방문 결제 번호, 고객명, 연락처\n"
             "• 담당 디자이너 및 소요 시간\n"
-            "• 선택 시술 항목, 결제 금액, 사용 포인트\n"
-            "• 결제 수단(카드/현금/포인트) 및 방문 일시",
+            "• 선택 시술 항목, 결제 금액, 사용 선결제, 사용 포인트\n"
+            "• 결제 수단(카드/현금/선결제/포인트) 및 방문 일시",
             card_sales
         )
         lbl_c2_desc.setFont(QFont("Inter", 11))
@@ -236,7 +237,11 @@ class SettingsCsvExportView(QWidget):
         if not file_path:
             return
 
-        headers = ["고객번호", "고객명", "전화번호", "보유포인트", "필수동의여부", "필수동의일시", "마케팅동의여부", "마케팅동의일시", "특이사항메모", "최초등록일시"]
+        headers = [
+            "고객번호", "고객명", "전화번호", "선결제잔액", "보유포인트",
+            "필수동의여부", "필수동의일시", "마케팅동의여부", "마케팅동의일시",
+            "특이사항메모", "최초등록일시"
+        ]
 
         try:
             # utf-8-sig 인코딩으로 엑셀 한글 깨짐 방지
@@ -269,7 +274,10 @@ class SettingsCsvExportView(QWidget):
         if not file_path:
             return
 
-        headers = ["방문번호", "고객명", "전화번호", "담당디자이너", "결제금액", "사용포인트", "소요시간(분)", "시술항목", "결제수단", "방문결제일시"]
+        headers = [
+            "방문번호", "고객명", "전화번호", "담당디자이너", "결제금액",
+            "사용선결제", "사용포인트", "소요시간(분)", "시술항목", "결제수단", "방문결제일시"
+        ]
 
         try:
             # utf-8-sig 인코딩으로 엑셀 한글 깨짐 방지
