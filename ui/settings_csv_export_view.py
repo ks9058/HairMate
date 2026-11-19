@@ -2,22 +2,83 @@ import csv
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QFrame, QFileDialog, QMessageBox
+    QPushButton, QFrame, QFileDialog, QDialog
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
-from ui.theme import Colors, get_icon
+from ui.theme import Colors
 from core.db_manager import DBManager
 
-
-class CustomAlertDialog(QMessageBox):
-    """안내 알림 팝업"""
+class CustomAlertDialog(QDialog):
+    """HairMate 테마가 적용된 안내 알림 팝업"""
     def __init__(self, title: str, message: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setText(message)
-        self.setIcon(QMessageBox.Information)
-        self.setStandardButtons(QMessageBox.Ok)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setModal(True)
+
+        is_error = "오류" in title
+        accent_color = "#D32F2F" if is_error else Colors.PRIMARY
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        container = QFrame(self)
+        container.setObjectName("alertContainer")
+        container.setStyleSheet("""
+            QFrame#alertContainer {
+                background-color: #FFFFFF;
+                border: 1px solid #D0D0D0;
+                border-radius: 12px;
+            }
+        """)
+
+        card_layout = QVBoxLayout(container)
+        card_layout.setContentsMargins(26, 22, 26, 22)
+        card_layout.setSpacing(14)
+
+        # 상단 타이틀 (배경 투명 처리)
+        lbl_title = QLabel(title, container)
+        lbl_title.setFont(QFont("Inter", 14, QFont.Bold))
+        lbl_title.setStyleSheet(f"background: transparent; color: {accent_color}; border: none;")
+        card_layout.addWidget(lbl_title)
+
+        # 본문 메시지 (배경 투명 처리 + 긴 경로 줄바꿈)
+        lbl_msg = QLabel(message, container)
+        lbl_msg.setFont(QFont("Inter", 11))
+        lbl_msg.setWordWrap(True)
+        lbl_msg.setMinimumWidth(340)
+        lbl_msg.setMaximumWidth(450)
+        lbl_msg.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        lbl_msg.setStyleSheet("background: transparent; color: #333333; border: none; line-height: 150%;")
+        card_layout.addWidget(lbl_msg)
+
+        # 하단 확인 버튼
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 6, 0, 0)
+        btn_layout.addStretch(1)
+
+        btn_ok = QPushButton("확인", container)
+        btn_ok.setFixedSize(100, 38)
+        btn_ok.setFont(QFont("Inter", 11, QFont.Bold))
+        btn_ok.setCursor(Qt.PointingHandCursor)
+        btn_ok.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_ok.clicked.connect(self.accept)
+
+        btn_layout.addWidget(btn_ok)
+        card_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(container)
 
 
 class SettingsCsvExportView(QWidget):
