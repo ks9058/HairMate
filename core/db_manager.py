@@ -38,8 +38,8 @@ class DBManager:
                 is_marketing_consent INTEGER NOT NULL DEFAULT 0,
                 marketing_consent_at DATETIME,
                 is_active INTEGER NOT NULL DEFAULT 1,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                updated_at DATETIME DEFAULT (datetime('now', 'localtime'))
             );
             """)
 
@@ -51,8 +51,8 @@ class DBManager:
                 phone TEXT,
                 position TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                updated_at DATETIME DEFAULT (datetime('now', 'localtime'))
             );
             """)
 
@@ -64,8 +64,8 @@ class DBManager:
                 display_order INTEGER NOT NULL DEFAULT 0,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 is_system INTEGER NOT NULL DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                updated_at DATETIME DEFAULT (datetime('now', 'localtime'))
             );
             """)
 
@@ -91,8 +91,8 @@ class DBManager:
                 duration_minutes INTEGER DEFAULT 30,
                 display_order INTEGER NOT NULL DEFAULT 0,
                 is_active INTEGER NOT NULL DEFAULT 1,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                updated_at DATETIME DEFAULT (datetime('now', 'localtime')),
                 FOREIGN KEY (category_id) REFERENCES category(id) ON DELETE RESTRICT
             );
             """)
@@ -108,9 +108,9 @@ class DBManager:
                 discount_amount INTEGER NOT NULL DEFAULT 0,
                 used_point INTEGER NOT NULL DEFAULT 0,
                 total_amount INTEGER NOT NULL DEFAULT 0,
-                visited_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                visited_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                updated_at DATETIME DEFAULT (datetime('now', 'localtime')),
                 FOREIGN KEY (customer_id) REFERENCES customer(id) ON DELETE RESTRICT,
                 FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE SET NULL
             );
@@ -125,8 +125,8 @@ class DBManager:
                 user_id INTEGER,
                 price INTEGER NOT NULL DEFAULT 0,
                 quantity INTEGER NOT NULL DEFAULT 1,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                updated_at DATETIME DEFAULT (datetime('now', 'localtime')),
                 FOREIGN KEY (visit_id) REFERENCES visit(id) ON DELETE CASCADE,
                 FOREIGN KEY (service_id) REFERENCES service(id) ON DELETE RESTRICT,
                 FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE SET NULL
@@ -140,7 +140,7 @@ class DBManager:
                 visit_id INTEGER NOT NULL,
                 amount INTEGER NOT NULL DEFAULT 0,
                 payment_method TEXT NOT NULL,
-                paid_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                paid_at DATETIME DEFAULT (datetime('now', 'localtime')),
                 FOREIGN KEY (visit_id) REFERENCES visit(id) ON DELETE CASCADE
             );
             """)
@@ -154,7 +154,7 @@ class DBManager:
                 amount INTEGER NOT NULL,
                 type TEXT NOT NULL,
                 description TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at DATETIME DEFAULT (datetime('now', 'localtime')),
                 FOREIGN KEY (customer_id) REFERENCES customer(id) ON DELETE RESTRICT,
                 FOREIGN KEY (visit_id) REFERENCES visit(id) ON DELETE SET NULL
             );
@@ -166,7 +166,7 @@ class DBManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 key TEXT UNIQUE NOT NULL,
                 value TEXT NOT NULL,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT (datetime('now', 'localtime'))
             );
             """)
 
@@ -197,10 +197,10 @@ class DBManager:
         try:
             cursor.execute("""
                 INSERT INTO settings (key, value, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, datetime('now', 'localtime'))
                 ON CONFLICT(key) DO UPDATE SET
                     value = excluded.value,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = datetime('now', 'localtime')
             """, (key, str(value)))
             conn.commit()
             return True
@@ -351,7 +351,7 @@ class DBManager:
         try:
             cursor.execute("""
                 UPDATE customer
-                SET name = ?, phone = ?, memo = ?, updated_at = CURRENT_TIMESTAMP
+                SET name = ?, phone = ?, memo = ?, updated_at = datetime('now', 'localtime')
                 WHERE id = ? AND is_active = 1
             """, (name, phone, memo, customer_id))
             conn.commit()
@@ -376,7 +376,7 @@ class DBManager:
                     UPDATE customer
                     SET is_consent = ?, consent_at = ?,
                         is_marketing_consent = ?, marketing_consent_at = ?,
-                        updated_at = CURRENT_TIMESTAMP
+                        updated_at = datetime('now', 'localtime')
                     WHERE id = ? AND is_active = 1
                 """, (is_consent, c_time, is_marketing_consent, m_time, customer_id))
                 conn.commit()
@@ -411,7 +411,7 @@ class DBManager:
                         consent_at = NULL,
                         is_marketing_consent = 0,
                         marketing_consent_at = NULL,
-                        updated_at = CURRENT_TIMESTAMP
+                        updated_at = datetime('now', 'localtime')
                     WHERE id = ?
                 """, (customer_id,))
                 conn.commit()
@@ -468,7 +468,7 @@ class DBManager:
 
             cursor.execute("""
                 UPDATE customer
-                SET point = point - ? + ?, memo = ?, updated_at = CURRENT_TIMESTAMP
+                SET point = point - ? + ?, memo = ?, updated_at = datetime('now', 'localtime')
                 WHERE id = ? AND is_active = 1
             """, (used_point, earned_point, memo, customer_id))
 
@@ -772,7 +772,7 @@ class DBManager:
             net_point_change = used_point - earned_point
             cursor.execute("""
                 UPDATE customer
-                SET point = MAX(0, point + ?), updated_at = CURRENT_TIMESTAMP
+                SET point = MAX(0, point + ?), updated_at = datetime('now', 'localtime')
                 WHERE id = ? AND is_active = 1
             """, (net_point_change, customer_id))
 
@@ -848,7 +848,7 @@ class DBManager:
                 else:
                     cursor.execute("""
                         UPDATE category
-                        SET name = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+                        SET name = ?, display_order = ?, is_active = ?, updated_at = datetime('now', 'localtime')
                         WHERE id = ?
                     """, (name, display_order, is_active, cat_id))
 
@@ -875,7 +875,7 @@ class DBManager:
                     else:
                         cursor.execute("""
                             UPDATE service
-                            SET category_id = ?, name = ?, price = ?, display_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+                            SET category_id = ?, name = ?, price = ?, display_order = ?, is_active = ?, updated_at = datetime('now', 'localtime')
                             WHERE id = ?
                         """, (cat_id, svc_name, price, display_order, is_active, svc_id))
 
@@ -934,7 +934,7 @@ class DBManager:
         try:
             cursor.execute("""
                 UPDATE user 
-                SET name = ?, phone = ?, position = ?, updated_at = CURRENT_TIMESTAMP
+                SET name = ?, phone = ?, position = ?, updated_at = datetime('now', 'localtime')
                 WHERE id = ? AND is_active = 1
             """, (name, phone, position, user_id))
             conn.commit()
@@ -962,7 +962,7 @@ class DBManager:
                 SET is_active = 0,
                     phone = '',
                     position = '퇴사',
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = datetime('now', 'localtime')
                 WHERE id = ? AND is_active = 1
             """, (user_id,))
             conn.commit()

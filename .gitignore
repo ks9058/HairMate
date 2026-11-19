@@ -21,3 +21,7 @@ token.json
 백업/
 *.enc
 *.db
+
+build/
+dist/
+*.spec
