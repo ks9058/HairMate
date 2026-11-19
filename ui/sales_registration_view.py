@@ -3,11 +3,11 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QTextEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
-    QFrame, QMessageBox, QAbstractItemView, QStackedWidget,
+    QFrame, QAbstractItemView, QStackedWidget,
     QComboBox, QDateEdit, QGridLayout, QScrollArea, QDialog, QSizePolicy,
     QSpinBox, QCheckBox
 )
-from PySide6.QtCore import Qt, QDate, Signal
+from PySide6.QtCore import Qt, QDate, Signal, QTimer
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QTextDocument, QPixmap
 from ui.theme import Colors, get_icon
 from core.db_manager import DBManager
@@ -114,6 +114,35 @@ SCROLLBAR_STYLE = """
     }
 """
 
+SLIM_H_SCROLLBAR_STYLE = """
+    QScrollArea {
+        border: none;
+        background: transparent;
+    }
+    QScrollBar:horizontal {
+        border: none;
+        background: #EAEAEA;
+        height: 6px;
+        margin: 0px;
+        border-radius: 3px;
+    }
+    QScrollBar::handle:horizontal {
+        background: #B0B0B0;
+        min-width: 24px;
+        border-radius: 3px;
+    }
+    QScrollBar::handle:horizontal:hover {
+        background: #888888;
+    }
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+        background: none;
+        width: 0px;
+    }
+    QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+        background: none;
+    }
+"""
+
 
 class HorizontalScrollArea(QScrollArea):
     """마우스 휠 조작 시 가로 스크롤로 동작하는 커스텀 QScrollArea"""
@@ -182,6 +211,198 @@ class CustomAlertDialog(QDialog):
         btn_layout.addWidget(btn_confirm)
         c_layout.addWidget(lbl_msg)
         c_layout.addLayout(btn_layout)
+        outer_layout.addWidget(container)
+
+
+class PaymentMethodModal(QDialog):
+    """[결제하기] 클릭 시 카드/현금 결제 수단을 선택하는 모달 팝업"""
+
+    def __init__(self, amount: int, parent=None):
+        super().__init__(parent)
+        self.selected_method = None
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(460, 320)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1.5px solid #B0B0B0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(24, 16, 24, 28)
+        c_layout.setSpacing(12)
+
+        top_bar = QHBoxLayout()
+        top_bar.addStretch(1)
+        btn_close = QPushButton("✕", container)
+        btn_close.setFixedSize(30, 30)
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setFont(QFont("Inter", 14, QFont.Bold))
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #333333;
+                border: none;
+            }
+            QPushButton:hover {
+                color: #E53E3E;
+            }
+        """)
+        btn_close.clicked.connect(self.reject)
+        top_bar.addWidget(btn_close)
+        c_layout.addLayout(top_bar)
+
+        lbl_amount = QLabel(
+            f"결제 금액: <font color='#E53E3E'>{amount:,}원</font>",
+            container
+        )
+        lbl_amount.setFont(QFont("Inter", 16, QFont.Bold))
+        lbl_amount.setAlignment(Qt.AlignCenter)
+        lbl_amount.setStyleSheet("border: none; background: transparent; color: #000000;")
+        c_layout.addWidget(lbl_amount)
+
+        lbl_guide = QLabel("결제수단을 선택해주세요", container)
+        lbl_guide.setFont(QFont("Inter", 15, QFont.Bold))
+        lbl_guide.setAlignment(Qt.AlignCenter)
+        lbl_guide.setStyleSheet("border: none; background: transparent; color: #000000;")
+        c_layout.addWidget(lbl_guide)
+
+        c_layout.addSpacing(8)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(20)
+        btn_row.setAlignment(Qt.AlignCenter)
+
+        btn_style = f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """
+
+        btn_cash = QPushButton("현금", container)
+        btn_cash.setFixedSize(145, 130)
+        btn_cash.setCursor(Qt.PointingHandCursor)
+        btn_cash.setFont(QFont("Inter", 20, QFont.Bold))
+        btn_cash.setStyleSheet(btn_style)
+        btn_cash.clicked.connect(lambda: self.choose("현금"))
+
+        btn_card = QPushButton("카드", container)
+        btn_card.setFixedSize(145, 130)
+        btn_card.setCursor(Qt.PointingHandCursor)
+        btn_card.setFont(QFont("Inter", 20, QFont.Bold))
+        btn_card.setStyleSheet(btn_style)
+        btn_card.clicked.connect(lambda: self.choose("카드"))
+
+        btn_row.addWidget(btn_cash)
+        btn_row.addWidget(btn_card)
+        c_layout.addLayout(btn_row)
+
+        outer_layout.addWidget(container)
+
+    def choose(self, method: str):
+        self.selected_method = method
+        self.accept()
+
+
+class ZeroAmountConfirmModal(QDialog):
+    """선결제·포인트 전액 차감으로 카드/현금 결제 금액이 0원일 때 노출되는 최종 확인 모달"""
+
+    def __init__(self, total_amount: int, use_prepaid: int, use_point: int, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(480, 260)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(5, 5, 5, 5)
+
+        container = QFrame(self)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                border: 1.5px solid #B0B0B0;
+            }
+        """)
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(28, 26, 28, 24)
+        c_layout.setSpacing(16)
+
+        details = []
+        if use_prepaid > 0:
+            details.append(f"선결제 {use_prepaid:,}원")
+        if use_point > 0:
+            details.append(f"포인트 {use_point:,}P")
+        detail_str = " + ".join(details) if details else "전액 차감"
+
+        msg = (
+            f"<div style='line-height: 155%; text-align: center;'>"
+            f"총 결제 금액 <b>{total_amount:,}원</b> ({detail_str})<br>"
+            f"추가 카드/현금 결제 금액이 <font color='#0D705C'><b>0원</b></font>입니다.<br>"
+            f"결제를 완료하시겠습니까?"
+            f"</div>"
+        )
+        lbl_msg = QLabel(msg, container)
+        lbl_msg.setFont(QFont("Inter", 13, QFont.Bold))
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setStyleSheet("border: none; background: transparent; color: #000000;")
+        c_layout.addWidget(lbl_msg)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(14)
+        btn_layout.setAlignment(Qt.AlignCenter)
+
+        btn_ok = QPushButton("결제 완료", container)
+        btn_ok.setFixedSize(130, 42)
+        btn_ok.setCursor(Qt.PointingHandCursor)
+        btn_ok.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_ok.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        btn_ok.clicked.connect(self.accept)
+
+        btn_cancel = QPushButton("취소", container)
+        btn_cancel.setFixedSize(130, 42)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.setFont(QFont("Inter", 12, QFont.Bold))
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: #E0E0E0;
+                color: #333333;
+                border: none;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #C0C0C0;
+            }
+        """)
+        btn_cancel.clicked.connect(self.reject)
+
+        btn_layout.addWidget(btn_ok)
+        btn_layout.addWidget(btn_cancel)
+        c_layout.addLayout(btn_layout)
+
         outer_layout.addWidget(container)
 
 
@@ -552,7 +773,7 @@ class QuantityControlWidget(QWidget):
 
 
 class SalesRegistrationView(QWidget):
-    """매출 등록 메인 뷰"""
+    """매출 등록 메인 뷰 (선결제 잔액 · 일반 포인트 독립 차감 및 [결제하기] 수단 선택 모달 지원)"""
 
     page_changed = Signal(bool)
 
@@ -568,9 +789,9 @@ class SalesRegistrationView(QWidget):
         self.services_map = {}
         self.active_category_name = None
 
-        self.total_amount = 0       
-        self.remaining_amount = 0   
-        self.payments_history = []  
+        self.total_amount = 0
+        self.remaining_amount = 0
+        self.payments_history = []  # 현금/카드 분할결제 내역 기록
 
         self.setup_ui()
         self.load_customer_list()
@@ -601,7 +822,9 @@ class SalesRegistrationView(QWidget):
 
         self.main_stack = QStackedWidget(self)
 
+        # ---------------------------------------------------------
         # Page 0: 고객 선택 화면
+        # ---------------------------------------------------------
         page_select_cust = QWidget()
         select_layout = QHBoxLayout(page_select_cust)
         select_layout.setContentsMargins(0, 0, 0, 0)
@@ -700,21 +923,33 @@ class SalesRegistrationView(QWidget):
         select_layout.addWidget(page_empty, 3)
         self.main_stack.addWidget(page_select_cust)
 
+        # ---------------------------------------------------------
         # Page 1: 매출 등록 대시보드
+        # ---------------------------------------------------------
         page_sales = QWidget()
         sales_layout = QHBoxLayout(page_sales)
         sales_layout.setContentsMargins(0, 0, 0, 0)
         sales_layout.setSpacing(20)
 
         left_sales_panel = QWidget(page_sales)
+        left_sales_panel.setMinimumWidth(0)
         left_s_layout = QVBoxLayout(left_sales_panel)
         left_s_layout.setContentsMargins(0, 0, 0, 0)
-        left_s_layout.setSpacing(10)
+        left_s_layout.setSpacing(0)
 
-# 1. 상단 옵션 바
-        ctrl_frame = QFrame(left_sales_panel)
+        # 좌측 통합 회색 패널 (담당 디자이너 행 + 고객 정보 행 + 결제탭 + 결제하기 버튼 포함)
+        left_sales_outer = QFrame(left_sales_panel)
+        left_sales_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
+        left_sales_outer.setAttribute(Qt.WA_StyledBackground, True)
+        left_outer_layout = QVBoxLayout(left_sales_outer)
+        left_outer_layout.setContentsMargins(8, 8, 8, 8)
+        left_outer_layout.setSpacing(8)
+
+        # 1. 상단 옵션 바 (담당 디자이너 / 결제일 / 시술 시간)
+        ctrl_frame = QFrame(left_sales_outer)
         ctrl_frame.setFixedHeight(64)
-        ctrl_frame.setStyleSheet("background-color: #FFFFFF; border: 1px solid #DCDCDC; border-radius: 6px;")
+        ctrl_frame.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
+        ctrl_frame.setAttribute(Qt.WA_StyledBackground, True)
         ctrl_layout = QHBoxLayout(ctrl_frame)
         ctrl_layout.setContentsMargins(10, 6, 10, 6)
         ctrl_layout.setSpacing(6)
@@ -729,7 +964,6 @@ class SalesRegistrationView(QWidget):
             color: #000000;
         """
 
-        # 담당 디자이너
         widget_designer = QWidget(ctrl_frame)
         widget_designer.setStyleSheet("background: transparent; border: none;")
         widget_designer.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -782,7 +1016,6 @@ class SalesRegistrationView(QWidget):
         v_designer.addWidget(lbl_d)
         v_designer.addWidget(self.cb_designer)
 
-        # 결제일
         widget_date = QWidget(ctrl_frame)
         widget_date.setStyleSheet("background: transparent; border: none;")
         widget_date.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -900,7 +1133,6 @@ class SalesRegistrationView(QWidget):
         v_date.addWidget(lbl_dt)
         v_date.addWidget(self.date_visit)
 
-        # 시술 시간
         widget_dur = QWidget(ctrl_frame)
         widget_dur.setStyleSheet("background: transparent; border: none;")
         widget_dur.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -978,139 +1210,15 @@ class SalesRegistrationView(QWidget):
         ctrl_layout.addWidget(widget_designer, 42)
         ctrl_layout.addWidget(widget_date, 36)
         ctrl_layout.addWidget(widget_dur, 22)
-        left_s_layout.addWidget(ctrl_frame)
+        left_outer_layout.addWidget(ctrl_frame)
 
-        # 2. 통합 결제 정보 카드
-        pay_card = QFrame(left_sales_panel)
-        pay_card.setStyleSheet(f"background-color: #FFFFFF; border: 2px solid {Colors.PRIMARY}; border-radius: 8px;")
-        pay_card_layout = QVBoxLayout(pay_card)
-        pay_card_layout.setContentsMargins(16, 12, 16, 12)
-        pay_card_layout.setSpacing(6)
-
-        r_total = QHBoxLayout()
-        lbl_t_title = QLabel("총 결제 금액 :", pay_card)
-        lbl_t_title.setFont(QFont("Inter", 12, QFont.Bold))
-        lbl_t_title.setStyleSheet("border: none; background: transparent; color: #000000;")
-        self.lbl_total_amount = QLabel("0 원", pay_card)
-        self.lbl_total_amount.setFont(QFont("Inter", 14, QFont.Bold))
-        self.lbl_total_amount.setAlignment(Qt.AlignRight)
-        self.lbl_total_amount.setStyleSheet("border: none; background: transparent; color: #000000;")
-        r_total.addWidget(lbl_t_title)
-        r_total.addWidget(self.lbl_total_amount, 1)
-        pay_card_layout.addLayout(r_total)
-
-        r_recv = QHBoxLayout()
-        lbl_rc_title = QLabel("받은 금액 :", pay_card)
-        lbl_rc_title.setFont(QFont("Inter", 12, QFont.Bold))
-        lbl_rc_title.setStyleSheet("border: none; background: transparent; color: #000000;")
-        
-        self.txt_received_amount = QLineEdit("0", pay_card)
-        self.txt_received_amount.setFont(QFont("Inter", 13, QFont.Bold))
-        self.txt_received_amount.setAlignment(Qt.AlignRight)
-        self.txt_received_amount.setStyleSheet("""
-            QLineEdit {
-                border: 1.5px solid #C0C0C0;
-                border-radius: 6px;
-                padding: 3px 8px;
-                background-color: #FAFAFA;
-                color: #000000;
-            }
-            QLineEdit:focus {
-                border: 2px solid #0D705C;
-                background-color: #FFFFFF;
-            }
-        """)
-        self.txt_received_amount.textChanged.connect(self.on_received_amount_changed)
-
-        r_recv.addWidget(lbl_rc_title)
-        r_recv.addWidget(self.txt_received_amount, 1)
-        pay_card_layout.addLayout(r_recv)
-
-        r_status = QHBoxLayout()
-        self.lbl_status_title = QLabel("남은 금액 :", pay_card)
-        self.lbl_status_title.setFont(QFont("Inter", 12, QFont.Bold))
-        self.lbl_status_title.setStyleSheet("border: none; background: transparent; color: #E53E3E;")
-
-        self.lbl_status_val = QLabel("0 원", pay_card)
-        self.lbl_status_val.setFont(QFont("Inter", 13, QFont.Bold))
-        self.lbl_status_val.setAlignment(Qt.AlignRight)
-        self.lbl_status_val.setStyleSheet("border: none; background: transparent; color: #E53E3E;")
-
-        r_status.addWidget(self.lbl_status_title)
-        r_status.addWidget(self.lbl_status_val, 1)
-        pay_card_layout.addLayout(r_status)
-
-        r_earn_point = QHBoxLayout()
-        lbl_earn_title = QLabel("적립 예정 포인트 :", pay_card)
-        lbl_earn_title.setFont(QFont("Inter", 10, QFont.Bold))
-        lbl_earn_title.setStyleSheet("border: none; background: transparent; color: #2B6CB0;")
-
-        self.lbl_earn_point_val = QLabel("0 P", pay_card)
-        self.lbl_earn_point_val.setFont(QFont("Inter", 10, QFont.Bold))
-        self.lbl_earn_point_val.setAlignment(Qt.AlignRight)
-        self.lbl_earn_point_val.setStyleSheet("border: none; background: transparent; color: #2B6CB0;")
-
-        r_earn_point.addWidget(lbl_earn_title)
-        r_earn_point.addWidget(self.lbl_earn_point_val, 1)
-        pay_card_layout.addLayout(r_earn_point)
-
-        self.lbl_history_summary = QLabel("", pay_card)
-        self.lbl_history_summary.setFont(QFont("Inter", 9, QFont.Bold))
-        self.lbl_history_summary.setStyleSheet("color: #0D705C; border: none; background: transparent;")
-        self.lbl_history_summary.setAlignment(Qt.AlignRight)
-        pay_card_layout.addWidget(self.lbl_history_summary)
-
-        left_s_layout.addWidget(pay_card)
-
-        # 3. 결제 수단 버튼 3종
-        pay_btn_layout = QHBoxLayout()
-        pay_btn_layout.setSpacing(8)
-
-        self.btn_pay_cash = QPushButton("현금 결제", left_sales_panel)
-        self.btn_pay_card = QPushButton("카드 결제", left_sales_panel)
-        self.btn_pay_point = QPushButton("포인트 결제", left_sales_panel)
-
-        self.btn_pay_cash.clicked.connect(lambda: self.process_payment("현금"))
-        self.btn_pay_card.clicked.connect(lambda: self.process_payment("카드"))
-        self.btn_pay_point.clicked.connect(lambda: self.process_payment("포인트"))
-
-        for btn in [self.btn_pay_cash, self.btn_pay_card, self.btn_pay_point]:
-            btn.setFixedHeight(40)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setFont(QFont("Inter", 11, QFont.Bold))
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {Colors.PRIMARY};
-                    color: #FFFFFF;
-                    border: none;
-                    border-radius: 6px;
-                }}
-                QPushButton:hover {{
-                    background-color: {Colors.PRIMARY_HOVER};
-                }}
-            """)
-            pay_btn_layout.addWidget(btn)
-
-        left_s_layout.addLayout(pay_btn_layout)
-
-        # 4. 고객 정보 박스
-        cust_info_outer = QFrame(left_sales_panel)
-        cust_info_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
-        cust_info_outer.setAttribute(Qt.WA_StyledBackground, True)
-        c_layout = QVBoxLayout(cust_info_outer)
-        c_layout.setContentsMargins(8, 8, 8, 8)
-
-        c_inner = QFrame(cust_info_outer)
+        # 2. 고객 정보 박스 (이름 / 전화번호 / 메모)
+        c_inner = QFrame(left_sales_outer)
         c_inner.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
         c_inner.setAttribute(Qt.WA_StyledBackground, True)
         ci_layout = QVBoxLayout(c_inner)
-        ci_layout.setContentsMargins(15, 12, 15, 12)
-        ci_layout.setSpacing(10)
-
-        upper_info_widget = QWidget(c_inner)
-        upper_info_layout = QVBoxLayout(upper_info_widget)
-        upper_info_layout.setContentsMargins(0, 0, 0, 0)
-        upper_info_layout.setSpacing(6)
+        ci_layout.setContentsMargins(14, 10, 14, 10)
+        ci_layout.setSpacing(8)
 
         row_qss = """
             QFrame {
@@ -1126,8 +1234,8 @@ class SalesRegistrationView(QWidget):
             }
         """
 
-        f_name = QFrame(upper_info_widget)
-        f_name.setFixedHeight(30)
+        f_name = QFrame(c_inner)
+        f_name.setFixedHeight(26)
         f_name.setStyleSheet(row_qss)
         r_name = QHBoxLayout(f_name)
         r_name.setContentsMargins(0, 0, 0, 0)
@@ -1139,10 +1247,10 @@ class SalesRegistrationView(QWidget):
         self.lbl_info_name.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         r_name.addWidget(lbl_name)
         r_name.addWidget(self.lbl_info_name, 1)
-        upper_info_layout.addWidget(f_name)
+        ci_layout.addWidget(f_name)
 
-        f_phone = QFrame(upper_info_widget)
-        f_phone.setFixedHeight(30)
+        f_phone = QFrame(c_inner)
+        f_phone.setFixedHeight(26)
         f_phone.setStyleSheet(row_qss)
         r_phone = QHBoxLayout(f_phone)
         r_phone.setContentsMargins(0, 0, 0, 0)
@@ -1154,35 +1262,17 @@ class SalesRegistrationView(QWidget):
         self.lbl_info_phone.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         r_phone.addWidget(lbl_phone)
         r_phone.addWidget(self.lbl_info_phone, 1)
-        upper_info_layout.addWidget(f_phone)
+        ci_layout.addWidget(f_phone)
 
-        f_point = QFrame(upper_info_widget)
-        f_point.setFixedHeight(30)
-        f_point.setStyleSheet(row_qss)
-        r_point = QHBoxLayout(f_point)
-        r_point.setContentsMargins(0, 0, 0, 0)
-        lbl_pt = QLabel("포 인 트 :", f_point)
-        lbl_pt.setFont(QFont("Inter", 10, QFont.Bold))
-        lbl_pt.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.lbl_info_point = QLabel("0P", f_point)
-        self.lbl_info_point.setFont(QFont("Inter", 10, QFont.Bold))
-        self.lbl_info_point.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        r_point.addWidget(lbl_pt)
-        r_point.addWidget(self.lbl_info_point, 1)
-        upper_info_layout.addWidget(f_point)
-
-        memo_widget = QWidget(c_inner)
-        memo_layout = QVBoxLayout(memo_widget)
-        memo_layout.setContentsMargins(0, 0, 0, 0)
-        memo_layout.setSpacing(4)
-
-        lbl_m_title = QLabel("메모 :", memo_widget)
+        lbl_m_title = QLabel("메모 :", c_inner)
         lbl_m_title.setFont(QFont("Inter", 10, QFont.Bold))
         lbl_m_title.setStyleSheet("border: none; background: transparent; color: #000000; font-weight: bold;")
-        
-        self.txt_info_memo = QTextEdit(memo_widget)
+        ci_layout.addWidget(lbl_m_title)
+
+        self.txt_info_memo = QTextEdit(c_inner)
         self.txt_info_memo.setPlaceholderText("특이사항 및 메모 입력")
         self.txt_info_memo.setFont(QFont("Inter", 10, QFont.Bold))
+        self.txt_info_memo.setMinimumHeight(55)
         self.txt_info_memo.setStyleSheet("""
             QTextEdit {
                 background-color: #FAFAFA;
@@ -1198,23 +1288,311 @@ class SalesRegistrationView(QWidget):
             }
         """)
         self.txt_info_memo.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
+        ci_layout.addWidget(self.txt_info_memo, 1)
 
-        memo_layout.addWidget(lbl_m_title)
-        memo_layout.addWidget(self.txt_info_memo, 1)
+        left_outer_layout.addWidget(c_inner, 1)
 
-        ci_layout.addWidget(upper_info_widget, 1)
-        ci_layout.addWidget(memo_widget, 1)
+        # 3. 통합 결제 정보 카드 (선결제 잔액 사용 · 포인트 사용 독립 입력)
+        pay_card = QFrame(left_sales_outer)
+        pay_card.setStyleSheet(f"background-color: #FFFFFF; border: 2px solid {Colors.PRIMARY}; border-radius: 6px;")
+        pay_card.setAttribute(Qt.WA_StyledBackground, True)
+        pay_card_layout = QVBoxLayout(pay_card)
+        pay_card_layout.setContentsMargins(14, 12, 14, 12)
+        pay_card_layout.setSpacing(7)
 
-        c_layout.addWidget(c_inner)
-        left_s_layout.addWidget(cust_info_outer, 1)
+        # 총 결제 금액
+        r_total = QHBoxLayout()
+        lbl_t_title = QLabel("총 결제 금액 :", pay_card)
+        lbl_t_title.setFont(QFont("Inter", 12, QFont.Bold))
+        lbl_t_title.setStyleSheet("border: none; background: transparent; color: #000000;")
+        self.lbl_total_amount = QLabel("0 원", pay_card)
+        self.lbl_total_amount.setFont(QFont("Inter", 14, QFont.Bold))
+        self.lbl_total_amount.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_total_amount.setStyleSheet("border: none; background: transparent; color: #000000;")
+        r_total.addWidget(lbl_t_title)
+        r_total.addWidget(self.lbl_total_amount, 1)
+        pay_card_layout.addLayout(r_total)
 
-        # 우측 패널
+        deduct_input_style = f"""
+            QLineEdit {{
+                border: 1.5px solid #B0B0B0;
+                border-radius: 5px;
+                padding: 2px 6px;
+                background-color: #FAFAFA;
+                color: #000000;
+            }}
+            QLineEdit:focus {{
+                border: 1.5px solid {Colors.PRIMARY};
+                background-color: #FFFFFF;
+            }}
+        """
+        use_all_btn_style = f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 5px;
+                padding: 0px 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """
+
+        # 선결제 잔액 사용
+        r_prepaid = QHBoxLayout()
+        r_prepaid.setSpacing(5)
+        lbl_pr_title = QLabel("선결제 잔액 사용 :", pay_card)
+        lbl_pr_title.setFont(QFont("Inter", 10, QFont.Bold))
+        lbl_pr_title.setStyleSheet("border: none; background: transparent; color: #000000;")
+
+        self.lbl_avail_prepaid = QLabel("0원 중", pay_card)
+        self.lbl_avail_prepaid.setFont(QFont("Inter", 9, QFont.Bold))
+        self.lbl_avail_prepaid.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_avail_prepaid.setStyleSheet("border: none; background: transparent; color: #444444;")
+
+        self.txt_use_prepaid = QLineEdit("0", pay_card)
+        self.txt_use_prepaid.setFixedSize(78, 26)
+        self.txt_use_prepaid.setFont(QFont("Inter", 10, QFont.Bold))
+        self.txt_use_prepaid.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.txt_use_prepaid.setStyleSheet(deduct_input_style)
+        self.txt_use_prepaid.textChanged.connect(self.on_use_prepaid_changed)
+
+        self.btn_use_all_prepaid = QPushButton("전액 사용", pay_card)
+        self.btn_use_all_prepaid.setFixedHeight(26)
+        self.btn_use_all_prepaid.setCursor(Qt.PointingHandCursor)
+        self.btn_use_all_prepaid.setFont(QFont("Inter", 9, QFont.Bold))
+        self.btn_use_all_prepaid.setStyleSheet(use_all_btn_style)
+        self.btn_use_all_prepaid.clicked.connect(self.apply_all_prepaid)
+
+        r_prepaid.addWidget(lbl_pr_title)
+        r_prepaid.addWidget(self.lbl_avail_prepaid, 1)
+        r_prepaid.addWidget(self.txt_use_prepaid)
+        r_prepaid.addWidget(self.btn_use_all_prepaid)
+        pay_card_layout.addLayout(r_prepaid)
+
+        # 포인트 사용
+        r_point = QHBoxLayout()
+        r_point.setSpacing(5)
+        lbl_pt_title = QLabel("포인트 사용 :", pay_card)
+        lbl_pt_title.setFont(QFont("Inter", 10, QFont.Bold))
+        lbl_pt_title.setStyleSheet("border: none; background: transparent; color: #000000;")
+
+        self.lbl_avail_point = QLabel("0P 중", pay_card)
+        self.lbl_avail_point.setFont(QFont("Inter", 9, QFont.Bold))
+        self.lbl_avail_point.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_avail_point.setStyleSheet("border: none; background: transparent; color: #444444;")
+
+        self.txt_use_point = QLineEdit("0", pay_card)
+        self.txt_use_point.setFixedSize(78, 26)
+        self.txt_use_point.setFont(QFont("Inter", 10, QFont.Bold))
+        self.txt_use_point.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.txt_use_point.setStyleSheet(deduct_input_style)
+        self.txt_use_point.textChanged.connect(self.on_use_point_changed)
+
+        self.btn_use_all_point = QPushButton("전액 사용", pay_card)
+        self.btn_use_all_point.setFixedHeight(26)
+        self.btn_use_all_point.setCursor(Qt.PointingHandCursor)
+        self.btn_use_all_point.setFont(QFont("Inter", 9, QFont.Bold))
+        self.btn_use_all_point.setStyleSheet(use_all_btn_style)
+        self.btn_use_all_point.clicked.connect(self.apply_all_point)
+
+        r_point.addWidget(lbl_pt_title)
+        r_point.addWidget(self.lbl_avail_point, 1)
+        r_point.addWidget(self.txt_use_point)
+        r_point.addWidget(self.btn_use_all_point)
+        pay_card_layout.addLayout(r_point)
+
+        # 할인/차감 합계
+        r_deduct = QHBoxLayout()
+        lbl_dd_title = QLabel("할인/차감 :", pay_card)
+        lbl_dd_title.setFont(QFont("Inter", 9, QFont.Bold))
+        lbl_dd_title.setStyleSheet("border: none; background: transparent; color: #666666;")
+
+        self.lbl_deduct_amount = QLabel("0원", pay_card)
+        self.lbl_deduct_amount.setFont(QFont("Inter", 9, QFont.Bold))
+        self.lbl_deduct_amount.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_deduct_amount.setStyleSheet("border: none; background: transparent; color: #666666;")
+
+        r_deduct.addWidget(lbl_dd_title)
+        r_deduct.addWidget(self.lbl_deduct_amount, 1)
+        pay_card_layout.addLayout(r_deduct)
+
+        # 구분선
+        divider = QFrame(pay_card)
+        divider.setFixedHeight(1)
+        divider.setStyleSheet("background-color: #DCDCDC; border: none;")
+        pay_card_layout.addWidget(divider)
+
+        # 받을 금액 (카드/현금)
+        r_recv = QHBoxLayout()
+        r_recv.setSpacing(5)
+        lbl_rc_title = QLabel("받을 금액(카드/현금) :", pay_card)
+        lbl_rc_title.setFont(QFont("Inter", 11, QFont.Bold))
+        lbl_rc_title.setStyleSheet("border: none; background: transparent; color: #000000;")
+
+        self.txt_received_amount = QLineEdit("0", pay_card)
+        self.txt_received_amount.setFont(QFont("Inter", 12, QFont.Bold))
+        self.txt_received_amount.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.txt_received_amount.setStyleSheet("""
+            QLineEdit {
+                border: 1.5px solid #C0C0C0;
+                border-radius: 6px;
+                padding: 3px 8px;
+                background-color: #FAFAFA;
+                color: #000000;
+            }
+            QLineEdit:focus {
+                border: 2px solid #0D705C;
+                background-color: #FFFFFF;
+            }
+        """)
+        self.txt_received_amount.textChanged.connect(self.on_received_amount_changed)
+
+        lbl_won_unit = QLabel("원", pay_card)
+        lbl_won_unit.setFont(QFont("Inter", 11, QFont.Bold))
+        lbl_won_unit.setStyleSheet("border: none; background: transparent; color: #000000;")
+
+        r_recv.addWidget(lbl_rc_title)
+        r_recv.addWidget(self.txt_received_amount, 1)
+        r_recv.addWidget(lbl_won_unit)
+        pay_card_layout.addLayout(r_recv)
+
+        # 남은 금액 / 거스름돈
+        r_status = QHBoxLayout()
+        self.lbl_status_title = QLabel("남은금액 :", pay_card)
+        self.lbl_status_title.setFont(QFont("Inter", 12, QFont.Bold))
+        self.lbl_status_title.setStyleSheet("border: none; background: transparent; color: #E53E3E;")
+
+        self.lbl_status_val = QLabel("0 원", pay_card)
+        self.lbl_status_val.setFont(QFont("Inter", 13, QFont.Bold))
+        self.lbl_status_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_status_val.setStyleSheet("border: none; background: transparent; color: #E53E3E;")
+
+        r_status.addWidget(self.lbl_status_title)
+        r_status.addWidget(self.lbl_status_val, 1)
+        pay_card_layout.addLayout(r_status)
+
+        # 적립 / 충전 예정 안내
+        r_earn_point = QHBoxLayout()
+        self.lbl_earn_title = QLabel("적립 예정 포인트 :", pay_card)
+        self.lbl_earn_title.setFont(QFont("Inter", 9, QFont.Bold))
+        self.lbl_earn_title.setStyleSheet("border: none; background: transparent; color: #2B6CB0;")
+
+        self.lbl_earn_point_val = QLabel("0 P", pay_card)
+        self.lbl_earn_point_val.setFont(QFont("Inter", 9, QFont.Bold))
+        self.lbl_earn_point_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_earn_point_val.setStyleSheet("border: none; background: transparent; color: #2B6CB0;")
+
+        r_earn_point.addWidget(self.lbl_earn_title)
+        r_earn_point.addWidget(self.lbl_earn_point_val, 1)
+        pay_card_layout.addLayout(r_earn_point)
+
+        # 분할결제 진행 내역 요약 (가로 스크롤 지원)
+        self.history_scroll = HorizontalScrollArea(pay_card)
+        self.history_scroll.setFixedHeight(26)
+        self.history_scroll.setMinimumWidth(0)
+        self.history_scroll.setWidgetResizable(True)
+        self.history_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.history_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.history_scroll.setStyleSheet(SLIM_H_SCROLLBAR_STYLE)
+        self.history_scroll.setVisible(False)
+
+        self.lbl_history_summary = QLabel("")
+        self.lbl_history_summary.setFont(QFont("Inter", 9, QFont.Bold))
+        self.lbl_history_summary.setStyleSheet("color: #0D705C; border: none; background: transparent; padding-bottom: 2px;")
+        self.lbl_history_summary.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.history_scroll.setWidget(self.lbl_history_summary)
+
+        pay_card_layout.addWidget(self.history_scroll)
+
+        left_outer_layout.addWidget(pay_card)
+
+        # 4. 단일 [결제하기] 버튼 (좌측 회색 바탕 내부에 포함)
+        self.btn_pay_submit = QPushButton("결제하기", left_sales_outer)
+        self.btn_pay_submit.setFixedHeight(44)
+        self.btn_pay_submit.setCursor(Qt.PointingHandCursor)
+        self.btn_pay_submit.setFont(QFont("Inter", 13, QFont.Bold))
+        self.btn_pay_submit.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_HOVER};
+            }}
+        """)
+        self.btn_pay_submit.clicked.connect(self.on_click_pay_submit)
+        left_outer_layout.addWidget(self.btn_pay_submit)
+
+        left_s_layout.addWidget(left_sales_outer, 1)
+
+        # ---------------------------------------------------------
+        # 우측 패널 (상단: 카테고리 및 시술 메뉴 / 하단: 장바구니 테이블)
+        # ---------------------------------------------------------
         right_sales_panel = QWidget(page_sales)
+        right_sales_panel.setMinimumWidth(0)
         right_s_layout = QVBoxLayout(right_sales_panel)
         right_s_layout.setContentsMargins(0, 0, 0, 0)
         right_s_layout.setSpacing(10)
 
-        # 장바구니 영역 패널
+        # 카테고리 탭 및 시술 메뉴 그리드 (상단)
+        menu_outer = QFrame(right_sales_panel)
+        menu_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
+        menu_outer.setAttribute(Qt.WA_StyledBackground, True)
+        menu_o_layout = QVBoxLayout(menu_outer)
+        menu_o_layout.setContentsMargins(8, 8, 8, 8)
+        menu_o_layout.setSpacing(8)
+
+        category_scroll = HorizontalScrollArea(menu_outer)
+        category_scroll.setFixedHeight(66)
+        category_scroll.setWidgetResizable(True)
+        category_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        category_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        category_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        category_widget = QWidget()
+        category_widget.setStyleSheet("background: transparent;")
+        self.category_bar_layout = QHBoxLayout(category_widget)
+        self.category_bar_layout.setContentsMargins(0, 0, 0, 0)
+        self.category_bar_layout.setSpacing(8)
+        self.category_bar_layout.setAlignment(Qt.AlignLeft)
+        category_scroll.setWidget(category_widget)
+
+        menu_o_layout.addWidget(category_scroll)
+
+        menu_inner = QFrame(menu_outer)
+        menu_inner.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
+        menu_inner.setAttribute(Qt.WA_StyledBackground, True)
+        menu_i_layout = QVBoxLayout(menu_inner)
+        menu_i_layout.setContentsMargins(6, 6, 6, 6)
+
+        scroll_area = QScrollArea(menu_inner)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        self.service_grid_widget = QWidget()
+        self.service_grid_widget.setStyleSheet("background: transparent;")
+        
+        self.service_grid_layout = QGridLayout(self.service_grid_widget)
+        self.service_grid_layout.setContentsMargins(2, 2, 2, 2)
+        self.service_grid_layout.setSpacing(6)
+        self.service_grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+
+        for c in range(4):
+            self.service_grid_layout.setColumnStretch(c, 1)
+
+        scroll_area.setWidget(self.service_grid_widget)
+        menu_i_layout.addWidget(scroll_area)
+
+        menu_o_layout.addWidget(menu_inner, 1)
+        right_s_layout.addWidget(menu_outer, 1)
+
+        # 장바구니 영역 패널 (하단)
         cart_outer = QFrame(right_sales_panel)
         cart_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         cart_outer.setAttribute(Qt.WA_StyledBackground, True)
@@ -1271,68 +1649,41 @@ class SalesRegistrationView(QWidget):
         cart_o_layout.addWidget(cart_inner)
         right_s_layout.addWidget(cart_outer, 1)
 
-        # 카테고리 탭 및 시술 메뉴 그리드
-        menu_outer = QFrame(right_sales_panel)
-        menu_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
-        menu_outer.setAttribute(Qt.WA_StyledBackground, True)
-        menu_o_layout = QVBoxLayout(menu_outer)
-        menu_o_layout.setContentsMargins(8, 8, 8, 8)
-        menu_o_layout.setSpacing(8)
-
-        category_scroll = HorizontalScrollArea(menu_outer)
-        category_scroll.setFixedHeight(66)
-        category_scroll.setWidgetResizable(True)
-        category_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        category_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        category_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-
-        category_widget = QWidget()
-        category_widget.setStyleSheet("background: transparent;")
-        self.category_bar_layout = QHBoxLayout(category_widget)
-        self.category_bar_layout.setContentsMargins(0, 0, 0, 0)
-        self.category_bar_layout.setSpacing(8)
-        self.category_bar_layout.setAlignment(Qt.AlignLeft)
-        category_scroll.setWidget(category_widget)
-
-        menu_o_layout.addWidget(category_scroll)
-
-        menu_inner = QFrame(menu_outer)
-        menu_inner.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
-        menu_inner.setAttribute(Qt.WA_StyledBackground, True)
-        menu_i_layout = QVBoxLayout(menu_inner)
-        menu_i_layout.setContentsMargins(6, 6, 6, 6)
-
-        scroll_area = QScrollArea(menu_inner)
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-
-        self.service_grid_widget = QWidget()
-        self.service_grid_widget.setStyleSheet("background: transparent;")
-        
-        self.service_grid_layout = QGridLayout(self.service_grid_widget)
-        self.service_grid_layout.setContentsMargins(2, 2, 2, 2)
-        self.service_grid_layout.setSpacing(6)
-        self.service_grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-
-        for c in range(4):
-            self.service_grid_layout.setColumnStretch(c, 1)
-
-        scroll_area.setWidget(self.service_grid_widget)
-        menu_i_layout.addWidget(scroll_area)
-
-        menu_o_layout.addWidget(menu_inner, 1)
-        right_s_layout.addWidget(menu_outer, 1)
-
-        sales_layout.addWidget(left_sales_panel, 35)
-        sales_layout.addWidget(right_sales_panel, 65)
+        sales_layout.addWidget(left_sales_panel, 36)
+        sales_layout.addWidget(right_sales_panel, 64)
 
         self.main_stack.addWidget(page_sales)
 
         main_layout.addWidget(self.main_stack)
         self.main_stack.setCurrentIndex(0)
 
+    # -------------------------------------------------------------
+    # 숫자 파싱 헬퍼
+    # -------------------------------------------------------------
+    @staticmethod
+    def _parse_int(text: str) -> int:
+        digits = "".join(filter(str.isdigit, text or ""))
+        return int(digits) if digits else 0
+
+    def _get_non_prepaid_cart_total(self) -> int:
+        """선결제 충전 상품을 제외한 일반 시술 합계 금액"""
+        return sum(
+            item["price"] * item["qty"]
+            for item in self.cart_items
+            if item.get("category_name") != "선결제"
+        )
+
+    def _get_prepaid_charge_cart_total(self) -> int:
+        """'선결제' 카테고리 충전 시술 합계 금액"""
+        return sum(
+            item["price"] * item["qty"]
+            for item in self.cart_items
+            if item.get("category_name") == "선결제"
+        )
+
+    # -------------------------------------------------------------
+    # 고객 목록 / 메뉴 / 디자이너 로딩
+    # -------------------------------------------------------------
     def confirm_and_clear_selection(self):
         """뒤로가기 클릭 시 취소 확인 팝업 노출"""
         dialog = ConfirmCancelDialog(self)
@@ -1487,14 +1838,20 @@ class SalesRegistrationView(QWidget):
             self.selected_customer = dict(target_cust)
             self.lbl_info_name.setText(self.selected_customer["name"])
             self.lbl_info_phone.setText(self.selected_customer["phone"])
-            self.lbl_info_point.setText(f"{self.selected_customer.get('point', 0):,}P")
-            
             self.txt_info_memo.setPlainText(self.selected_customer.get("memo", "") or "")
 
+            avail_prepaid = self.selected_customer.get("prepaid_balance", 0)
+            avail_point = self.selected_customer.get("point", 0)
+            self.lbl_avail_prepaid.setText(f"{avail_prepaid:,}원 중")
+            self.lbl_avail_point.setText(f"{avail_point:,}P 중")
+
+            self._set_deduction_inputs(0, 0)
             self.payments_history.clear()
             self.lbl_history_summary.setText("")
+            self.history_scroll.setVisible(False)
+            self.update_cart_table()
+
             self.main_stack.setCurrentIndex(1)
-            
             self.page_changed.emit(True)
 
     def clear_customer_selection(self):
@@ -1502,70 +1859,173 @@ class SalesRegistrationView(QWidget):
         self.cust_table.clearSelection()
         self.cart_items.clear()
         self.payments_history.clear()
+        self._set_deduction_inputs(0, 0)
+        self.lbl_history_summary.setText("")
+        self.history_scroll.setVisible(False)
         self.update_cart_table()
         self.main_stack.setCurrentIndex(0)
         
         self.page_changed.emit(False)
 
-    def on_received_amount_changed(self, text: str):
-        digits = "".join(filter(str.isdigit, text))
-        val = int(digits) if digits else 0
+    # -------------------------------------------------------------
+    # 선결제 잔액 · 포인트 독립 입력 및 금액 계산 로직
+    # -------------------------------------------------------------
+    def _set_deduction_inputs(self, use_prepaid: int, use_point: int):
+        self.txt_use_prepaid.blockSignals(True)
+        self.txt_use_prepaid.setText(f"{max(0, use_prepaid):,}")
+        self.txt_use_prepaid.blockSignals(False)
 
+        self.txt_use_point.blockSignals(True)
+        self.txt_use_point.setText(f"{max(0, use_point):,}")
+        self.txt_use_point.blockSignals(False)
+
+    def apply_all_prepaid(self):
+        """[선결제 잔액 사용] 전액 사용 버튼 클릭"""
+        if not self.selected_customer:
+            return
+        avail_prepaid = self.selected_customer.get("prepaid_balance", 0)
+        already_cash_card = sum(p["amount"] for p in self.payments_history)
+        use_point = self._parse_int(self.txt_use_point.text())
+
+        # 선결제 충전 상품은 선결제 잔액으로 재결제 불가하도록 일반 시술 금액 한도 적용
+        non_prepaid_total = self._get_non_prepaid_cart_total()
+        max_for_prepaid = max(0, non_prepaid_total - use_point - already_cash_card)
+        target_val = min(avail_prepaid, max_for_prepaid)
+
+        self.txt_use_prepaid.setText(f"{target_val:,}")
+
+    def apply_all_point(self):
+        """[포인트 사용] 전액 사용 버튼 클릭"""
+        if not self.selected_customer:
+            return
+        avail_point = self.selected_customer.get("point", 0)
+        already_cash_card = sum(p["amount"] for p in self.payments_history)
+        use_prepaid = self._parse_int(self.txt_use_prepaid.text())
+
+        non_prepaid_total = self._get_non_prepaid_cart_total()
+        max_for_point = max(0, non_prepaid_total - use_prepaid - already_cash_card)
+        target_val = min(avail_point, max_for_point)
+
+        self.txt_use_point.setText(f"{target_val:,}")
+
+    def on_use_prepaid_changed(self, text: str):
+        avail_prepaid = self.selected_customer.get("prepaid_balance", 0) if self.selected_customer else 0
+        already_cash_card = sum(p["amount"] for p in self.payments_history)
+        use_point = self._parse_int(self.txt_use_point.text())
+
+        non_prepaid_total = self._get_non_prepaid_cart_total()
+        max_allowed = min(avail_prepaid, max(0, non_prepaid_total - use_point - already_cash_card))
+
+        raw_val = self._parse_int(text)
+        clamped_val = min(raw_val, max_allowed)
+
+        self.txt_use_prepaid.blockSignals(True)
+        self.txt_use_prepaid.setText(f"{clamped_val:,}")
+        self.txt_use_prepaid.blockSignals(False)
+
+        self.sync_balances_and_status(reset_received=True)
+
+    def on_use_point_changed(self, text: str):
+        avail_point = self.selected_customer.get("point", 0) if self.selected_customer else 0
+        already_cash_card = sum(p["amount"] for p in self.payments_history)
+        use_prepaid = self._parse_int(self.txt_use_prepaid.text())
+
+        non_prepaid_total = self._get_non_prepaid_cart_total()
+        max_allowed = min(avail_point, max(0, non_prepaid_total - use_prepaid - already_cash_card))
+
+        raw_val = self._parse_int(text)
+        clamped_val = min(raw_val, max_allowed)
+
+        self.txt_use_point.blockSignals(True)
+        self.txt_use_point.setText(f"{clamped_val:,}")
+        self.txt_use_point.blockSignals(False)
+
+        self.sync_balances_and_status(reset_received=True)
+
+    def on_received_amount_changed(self, text: str):
+        val = self._parse_int(text)
         self.txt_received_amount.blockSignals(True)
         self.txt_received_amount.setText(f"{val:,}")
         self.txt_received_amount.blockSignals(False)
 
         self.recalculate_payment_status()
 
-    def calculate_expected_earned_points(self, current_cash_card_pay: int = 0) -> int:
+    def calculate_expected_rewards(self) -> tuple[int, int]:
+        """
+        장바구니 기준 (일반 적립 예정 포인트, 충전 예정 선결제 금액) 계산
+        - '선결제' 카테고리 시술: 원금 + 보너스(point_rate_prepaid) 합산하여 선결제 잔액 충전 (일반 포인트 이중 적립 제외)
+        - 일반 시술: 선결제 잔액 사용 여부와 무관하게 일반 포인트 별도 적립 (단, 무료 포인트 사용분은 제외)
+        """
+        if self.total_amount <= 0 or not self.cart_items:
+            return 0, 0
+
         gen_rate, prep_rate = self.get_point_rates()
+        use_point = self._parse_int(self.txt_use_point.text())
 
-        already_cash_card = sum(p["amount"] for p in self.payments_history if p["method"] in ["현금", "카드"])
-        total_cash_card_paid = already_cash_card + current_cash_card_pay
+        prepaid_item_total = self._get_prepaid_charge_cart_total()
+        general_item_total = self._get_non_prepaid_cart_total()
 
-        if self.total_amount <= 0 or total_cash_card_paid <= 0:
-            return 0
+        charged_prepaid = int(round(prepaid_item_total * (1.0 + prep_rate))) if prepaid_item_total > 0 else 0
+        eligible_general_amt = max(0, general_item_total - use_point)
+        earned_point = int(round(eligible_general_amt * gen_rate)) if eligible_general_amt > 0 else 0
 
-        cash_card_ratio = min(1.0, total_cash_card_paid / float(self.total_amount))
+        return earned_point, charged_prepaid
 
-        total_earned = 0
-        for item in self.cart_items:
-            item_total = item["price"] * item["qty"]
-            is_prepaid = (item.get("category_name") == "선결제")
-            
-            if is_prepaid:
-                earned_for_item = item_total * (1.0 + prep_rate)
-            else:
-                earned_for_item = item_total * gen_rate
+    def sync_balances_and_status(self, reset_received: bool = True):
+        """총 결제 금액, 선결제/포인트 차감액, 남은 금액, 적립/충전 예정 표시 동기화"""
+        avail_prepaid = self.selected_customer.get("prepaid_balance", 0) if self.selected_customer else 0
+        avail_point = self.selected_customer.get("point", 0) if self.selected_customer else 0
+        already_cash_card = sum(p["amount"] for p in self.payments_history)
+        non_prepaid_total = self._get_non_prepaid_cart_total()
 
-            total_earned += int(earned_for_item * cash_card_ratio)
+        use_prepaid = min(self._parse_int(self.txt_use_prepaid.text()), avail_prepaid, max(0, non_prepaid_total - already_cash_card))
+        use_point = min(self._parse_int(self.txt_use_point.text()), avail_point, max(0, non_prepaid_total - already_cash_card - use_prepaid))
+        self._set_deduction_inputs(use_prepaid, use_point)
 
-        return total_earned
+        total_deducted = use_prepaid + use_point
+        self.lbl_deduct_amount.setText(f"-{total_deducted:,}원" if total_deducted > 0 else "0원")
+
+        self.remaining_amount = max(0, self.total_amount - total_deducted - already_cash_card)
+
+        if reset_received:
+            self.txt_received_amount.blockSignals(True)
+            self.txt_received_amount.setText(f"{self.remaining_amount:,}")
+            self.txt_received_amount.blockSignals(False)
+
+        self.recalculate_payment_status()
 
     def recalculate_payment_status(self):
-        digits = "".join(filter(str.isdigit, self.txt_received_amount.text()))
-        received_val = int(digits) if digits else 0
-
+        received_val = self._parse_int(self.txt_received_amount.text())
         diff = received_val - self.remaining_amount
 
-        if diff >= 0:
+        if diff > 0:
             self.lbl_status_title.setText("거스름돈 :")
             self.lbl_status_title.setStyleSheet("border: none; background: transparent; color: #0D705C;")
             self.lbl_status_val.setText(f"{diff:,} 원")
             self.lbl_status_val.setStyleSheet("border: none; background: transparent; color: #0D705C;")
         else:
             rem = abs(diff)
-            self.lbl_status_title.setText("남은 금액 :")
+            self.lbl_status_title.setText("남은금액 :")
             self.lbl_status_title.setStyleSheet("border: none; background: transparent; color: #E53E3E;")
             self.lbl_status_val.setText(f"{rem:,} 원")
             self.lbl_status_val.setStyleSheet("border: none; background: transparent; color: #E53E3E;")
 
-        current_pay_val = min(received_val, self.remaining_amount)
-        expected_earn_point = self.calculate_expected_earned_points(current_pay_val)
-        
+        earned_point, charged_prepaid = self.calculate_expected_rewards()
         gen_rate, prep_rate = self.get_point_rates()
-        self.lbl_earn_point_val.setText(f"{expected_earn_point:,} P (일반 {int(gen_rate*100)}% / 선결제 {int(prep_rate*100)}%)")
 
+        if charged_prepaid > 0 and earned_point > 0:
+            self.lbl_earn_title.setText("충전 / 적립 예정 :")
+            self.lbl_earn_point_val.setText(f"선결제 +{charged_prepaid:,}원 / 포인트 +{earned_point:,}P")
+        elif charged_prepaid > 0:
+            self.lbl_earn_title.setText("충전 예정 선결제 :")
+            self.lbl_earn_point_val.setText(f"+{charged_prepaid:,} 원 (보너스 {int(prep_rate * 100)}% 포함)")
+        else:
+            self.lbl_earn_title.setText("적립 예정 포인트 :")
+            self.lbl_earn_point_val.setText(f"{earned_point:,} P (일반 {int(gen_rate * 100)}%)")
+
+    # -------------------------------------------------------------
+    # 장바구니 조작
+    # -------------------------------------------------------------
     def add_to_cart(self, service: dict, category_name: str = ""):
         service_id = service["id"]
         cat_name = category_name or self.active_category_name or ""
@@ -1628,9 +2088,6 @@ class SalesRegistrationView(QWidget):
         self.cart_table.setRowCount(0)
         
         self.total_amount = sum(item["price"] * item["qty"] for item in self.cart_items)
-        
-        paid_so_far = sum(p["amount"] for p in self.payments_history)
-        self.remaining_amount = max(0, self.total_amount - paid_so_far)
 
         for row, item in enumerate(self.cart_items):
             line_total = item["price"] * item["qty"]
@@ -1659,24 +2116,18 @@ class SalesRegistrationView(QWidget):
 
         self.cart_table.blockSignals(False)
 
-        self.lbl_total_amount.setText(f"{self.remaining_amount:,} 원" if paid_so_far > 0 else f"{self.total_amount:,} 원")
-        
-        self.txt_received_amount.blockSignals(True)
-        self.txt_received_amount.setText(f"{self.remaining_amount:,}")
-        self.txt_received_amount.blockSignals(False)
+        self.lbl_total_amount.setText(f"{self.total_amount:,} 원")
+        self.sync_balances_and_status(reset_received=True)
 
-        self.recalculate_payment_status()
-
-    def process_payment(self, method: str):
+    # -------------------------------------------------------------
+    # [결제하기] 단일 진입점 및 모달 결제 처리
+    # -------------------------------------------------------------
+    def on_click_pay_submit(self):
         if not self.cart_items:
             CustomAlertDialog("결제 오류", "장바구니에 담긴 시술이 없습니다.", self).exec()
             return
 
-        if self.remaining_amount <= 0:
-            CustomAlertDialog("결제 완료", "이미 결제가 완료되었습니다.", self).exec()
-            return
-
-        # [이관 고객 및 미동의 고객 첫 결제 시 동의 모달 팝업]
+        # 이관 고객 및 미동의 고객 첫 결제 시 동의 모달 팝업
         if self.selected_customer and self.selected_customer.get("is_consent", 0) == 0:
             c_name = self.selected_customer.get("name", "")
             c_phone = self.selected_customer.get("phone", "")
@@ -1686,7 +2137,6 @@ class SalesRegistrationView(QWidget):
                 is_mkt = 1 if consent_dialog.chk_marketing.isChecked() else 0
                 cust_id = self.selected_customer["id"]
 
-                # DB 개인정보 동의 상태 및 메모리 객체 동기화
                 self.db_manager.update_customer_consent(cust_id, is_consent=1, is_marketing_consent=is_mkt)
                 self.selected_customer["is_consent"] = 1
                 self.selected_customer["is_marketing_consent"] = is_mkt
@@ -1694,95 +2144,116 @@ class SalesRegistrationView(QWidget):
                 CustomAlertDialog("결제 중단", "개인정보 수집 및 이용 동의가 완료되지 않아 결제가 취소되었습니다.", self).exec()
                 return
 
-        digits = "".join(filter(str.isdigit, self.txt_received_amount.text()))
-        input_amt = int(digits) if digits else 0
+        self.sync_balances_and_status(reset_received=False)
 
-        if input_amt <= 0:
-            CustomAlertDialog("결제 오류", "결제할 금액을 입력해 주세요.", self).exec()
+        use_prepaid = self._parse_int(self.txt_use_prepaid.text())
+        use_point = self._parse_int(self.txt_use_point.text())
+
+        # Case 1: 선결제·포인트 전액 차감으로 카드/현금 받을 금액이 0원인 경우
+        if self.remaining_amount <= 0:
+            confirm_modal = ZeroAmountConfirmModal(self.total_amount, use_prepaid, use_point, self)
+            if confirm_modal.exec() == QDialog.Accepted:
+                self._finalize_sale_to_db(change_amt=0)
             return
 
-        total_point_used = sum(p["amount"] for p in self.payments_history if p["method"] == "포인트")
+        # Case 2: 카드/현금으로 결제할 잔액이 남아있는 경우
+        received_val = self._parse_int(self.txt_received_amount.text())
+        if received_val <= 0:
+            CustomAlertDialog("결제 오류", "받을 금액(카드/현금)을 입력해 주세요.", self).exec()
+            return
 
-        if method == "포인트":
-            available_point = self.selected_customer.get("point", 0) if self.selected_customer else 0
-            current_usable_point = available_point - total_point_used
+        pay_amt = min(received_val, self.remaining_amount)
+        change_amt = max(0, received_val - self.remaining_amount)
 
-            if current_usable_point <= 0:
-                CustomAlertDialog("포인트 부족", "사용 가능한 보유 포인트가 없습니다.", self).exec()
-                return
+        method_modal = PaymentMethodModal(pay_amt, self)
+        if method_modal.exec() != QDialog.Accepted or not method_modal.selected_method:
+            return
 
-            if input_amt > current_usable_point:
-                CustomAlertDialog(
-                    "포인트 부족", 
-                    f"입력한 금액({input_amt:,}원)이 사용 가능 포인트({current_usable_point:,}P)를 초과할 수 없습니다.", 
-                    self
-                ).exec()
-                return
-
-        pay_amt = min(input_amt, self.remaining_amount)
-        change_amt = max(0, input_amt - self.remaining_amount)
-
-        self.payments_history.append({"method": method, "amount": pay_amt})
+        chosen_method = method_modal.selected_method
+        self.payments_history.append({"method": chosen_method, "amount": pay_amt})
         self.remaining_amount -= pay_amt
-
-        total_point_used = sum(p["amount"] for p in self.payments_history if p["method"] == "포인트")
-        current_display_point = max(0, self.selected_customer.get("point", 0) - total_point_used)
-        self.lbl_info_point.setText(f"{current_display_point:,}P")
 
         history_str = " | ".join([f"{p['method']} {p['amount']:,}원" for p in self.payments_history])
         self.lbl_history_summary.setText(f"결제 내역: {history_str}")
+        self.history_scroll.setVisible(True)
+        QTimer.singleShot(
+            0,
+            lambda: self.history_scroll.horizontalScrollBar().setValue(
+                self.history_scroll.horizontalScrollBar().maximum()
+            ),
+        )
 
         if self.remaining_amount <= 0:
-            earned_point = self.calculate_expected_earned_points(0)
-            
-            cust_id = self.selected_customer["id"]
-            new_memo = self.txt_info_memo.toPlainText().strip()
-            designer_id = self.cb_designer.currentData()
-            duration_minutes = self.spn_duration.value()
-            selected_date = self.date_visit.date().toString("yyyy-MM-dd")
-            current_time_str = datetime.now().strftime("%H:%M:%S")
-            visited_at_str = f"{selected_date} {current_time_str}"
-
-            save_success = self.db_manager.record_sale(
-                customer_id=cust_id,
-                user_id=designer_id,
-                duration_minutes=duration_minutes,
-                total_amount=self.total_amount,
-                used_point=total_point_used,
-                earned_point=earned_point,
-                visited_at_str=visited_at_str,
-                memo=new_memo,
-                cart_items=self.cart_items,
-                payments_history=self.payments_history
-            )
-
-            if not save_success:
-                CustomAlertDialog("저장 오류", "DB 매출 저장 중 오류가 발생했습니다.", self).exec()
-                return
-
-            msg = f"결제가 성공적으로 완료되었습니다!\n\n• 총 결제 금액: {self.total_amount:,}원"
-            if total_point_used > 0:
-                msg += f"\n• 사용 포인트: -{total_point_used:,} P"
-            if earned_point > 0:
-                msg += f"\n• 충전/적립 포인트: +{earned_point:,} P"
-
-            final_point = self.selected_customer.get("point", 0) - total_point_used + earned_point
-            msg += f"\n• 최종 보유 포인트: {final_point:,} P"
-
-            if change_amt > 0:
-                msg += f"\n\n※ 거스름돈: {change_amt:,}원"
-
-            CustomAlertDialog("결제 완료", msg, self).exec()
-            
-            self.load_customer_list()
-            self.clear_customer_selection()
+            self._finalize_sale_to_db(change_amt=change_amt)
         else:
             CustomAlertDialog(
-                "부분 결제 완료", 
-                f"[{method}] {pay_amt:,}원 결제 승인되었습니다.\n남은 결제 금액: {self.remaining_amount:,}원", 
+                "부분 결제 완료",
+                f"[{chosen_method}] {pay_amt:,}원 결제 승인되었습니다.\n남은 결제 금액: {self.remaining_amount:,}원",
                 self
             ).exec()
-            self.txt_received_amount.blockSignals(True)
-            self.txt_received_amount.setText(f"{self.remaining_amount:,}")
-            self.txt_received_amount.blockSignals(False)
-            self.recalculate_payment_status()
+            self.sync_balances_and_status(reset_received=True)
+
+    def _finalize_sale_to_db(self, change_amt: int = 0):
+        """최종 결제 수단 합산 후 DB 저장 및 완료 안내"""
+        use_prepaid = self._parse_int(self.txt_use_prepaid.text())
+        use_point = self._parse_int(self.txt_use_point.text())
+        earned_point, charged_prepaid = self.calculate_expected_rewards()
+
+        final_payments = list(self.payments_history)
+        if use_prepaid > 0:
+            final_payments.append({"method": "선결제", "amount": use_prepaid})
+        if use_point > 0:
+            final_payments.append({"method": "포인트", "amount": use_point})
+
+        cust_id = self.selected_customer["id"]
+        new_memo = self.txt_info_memo.toPlainText().strip()
+        designer_id = self.cb_designer.currentData()
+        duration_minutes = self.spn_duration.value()
+        selected_date = self.date_visit.date().toString("yyyy-MM-dd")
+        current_time_str = datetime.now().strftime("%H:%M:%S")
+        visited_at_str = f"{selected_date} {current_time_str}"
+
+        save_success = self.db_manager.record_sale(
+            customer_id=cust_id,
+            user_id=designer_id,
+            duration_minutes=duration_minutes,
+            total_amount=self.total_amount,
+            used_point=use_point,
+            earned_point=earned_point,
+            visited_at_str=visited_at_str,
+            memo=new_memo,
+            cart_items=self.cart_items,
+            payments_history=final_payments,
+            used_prepaid=use_prepaid,
+            charged_prepaid=charged_prepaid
+        )
+
+        if not save_success:
+            CustomAlertDialog("저장 오류", "DB 매출 저장 중 오류가 발생했습니다.", self).exec()
+            return
+
+        prev_prepaid = self.selected_customer.get("prepaid_balance", 0)
+        prev_point = self.selected_customer.get("point", 0)
+        final_prepaid = max(0, prev_prepaid - use_prepaid + charged_prepaid)
+        final_point = max(0, prev_point - use_point + earned_point)
+
+        msg = f"결제가 성공적으로 완료되었습니다!\n\n• 총 결제 금액: {self.total_amount:,}원"
+        if use_prepaid > 0:
+            msg += f"\n• 선결제 차감: -{use_prepaid:,}원"
+        if charged_prepaid > 0:
+            msg += f"\n• 선결제 충전: +{charged_prepaid:,}원"
+        if use_point > 0:
+            msg += f"\n• 포인트 사용: -{use_point:,} P"
+        if earned_point > 0:
+            msg += f"\n• 일반 포인트 적립: +{earned_point:,} P"
+
+        msg += f"\n\n• 최종 선결제 잔액: {final_prepaid:,}원"
+        msg += f"\n• 최종 보유 포인트: {final_point:,} P"
+
+        if change_amt > 0:
+            msg += f"\n\n※ 거스름돈: {change_amt:,}원"
+
+        CustomAlertDialog("결제 완료", msg, self).exec()
+
+        self.load_customer_list()
+        self.clear_customer_selection()

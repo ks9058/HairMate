@@ -1,11 +1,11 @@
 import re
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, 
-    QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
+    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit,
+    QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QFrame, QDialog, QAbstractItemView, QDateEdit, QToolTip
 )
 from PySide6.QtCore import Qt, QDate
-from PySide6.QtGui import QFont, QColor, QPainter, QPainterPath, QTextDocument, QCursor
+from PySide6.QtGui import QFont, QCursor, QColor, QPainterPath, QTextDocument
 from ui.theme import Colors, get_icon
 from core.db_manager import DBManager
 
@@ -187,13 +187,13 @@ class SalesCancelView(QWidget):
         self.db_manager = DBManager()
         self.sales_list = []
         self.selected_sale = None
+        self.is_date_filter_active = True
 
         self.setup_ui()
         self.load_sales_data()
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
-        # 결제등록과 일치하도록 하단 여백 25px 수정
         main_layout.setContentsMargins(25, 15, 25, 25)
         main_layout.setSpacing(15)
 
@@ -202,7 +202,6 @@ class SalesCancelView(QWidget):
         outer_container.setAttribute(Qt.WA_StyledBackground, True)
 
         outer_layout = QVBoxLayout(outer_container)
-        # 결제등록 좌측 패널과 동일하게 내부 여백 8px 및 요소 간격 8px 적용
         outer_layout.setContentsMargins(8, 8, 8, 8)
         outer_layout.setSpacing(8)
 
@@ -250,7 +249,7 @@ class SalesCancelView(QWidget):
         self.date_filter.setFont(QFont("Inter", 11))
         self.date_filter.setCalendarPopup(True)
         self.date_filter.setDate(QDate.currentDate())
-        
+
         cal = self.date_filter.calendarWidget()
         if cal:
             cal.setNavigationBarVisible(True)
@@ -345,7 +344,7 @@ class SalesCancelView(QWidget):
         """)
         btn_clear_date.clicked.connect(self.reset_date_filter)
 
-        self.date_filter.dateChanged.connect(self.filter_sales_data)
+        self.date_filter.dateChanged.connect(self.on_date_filter_changed)
 
         date_l.addWidget(lbl_date_title)
         date_l.addWidget(self.date_filter, 1)
@@ -369,7 +368,7 @@ class SalesCancelView(QWidget):
         header.setFixedHeight(40)
         self.table.setHorizontalHeader(header)
 
-        headers = ["번호", "고객이름", "전화번호", "시술메뉴", "결제수단", "결제금액", "결제일시", "적립포인트", "시술시간", "시술자"]
+        headers = ["번호", "고객이름", "전화번호", "시술메뉴", "결제금액", "결제수단", "결제일시", "적립포인트", "시술시간", "시술자"]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -409,7 +408,7 @@ class SalesCancelView(QWidget):
                 font-family: Inter, sans-serif;
             }
         """)
-        
+
         self.table.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
 
         # 컬럼 가로폭 개별 최적화
@@ -428,13 +427,13 @@ class SalesCancelView(QWidget):
         h_header.setSectionResizeMode(3, QHeaderView.Fixed)
         self.table.setColumnWidth(3, 120)
 
-        # 4: 결제수단 (100px 고정)
+        # 4: 결제금액 (130px 고정)
         h_header.setSectionResizeMode(4, QHeaderView.Fixed)
-        self.table.setColumnWidth(4, 100)
+        self.table.setColumnWidth(4, 130)
 
-        # 5: 결제금액 (130px 고정)
+        # 5: 결제수단 (100px 고정)
         h_header.setSectionResizeMode(5, QHeaderView.Fixed)
-        self.table.setColumnWidth(5, 130)
+        self.table.setColumnWidth(5, 100)
 
         # 6: 결제일시 (150px 고정)
         h_header.setSectionResizeMode(6, QHeaderView.Fixed)
@@ -454,14 +453,26 @@ class SalesCancelView(QWidget):
         self.btn_delete.setFixedSize(220, 48)
         self.btn_delete.setFont(QFont("Inter", 13, QFont.Bold))
         self.btn_delete.clicked.connect(self.confirm_and_delete_sale)
-        
+
         main_layout.addWidget(self.btn_delete, 0, Qt.AlignCenter)
 
         self.update_delete_button_state(False)
 
+    @staticmethod
+    def _build_list_tooltip(items: list[str]) -> str:
+        formatted_items = "<br>".join([f"• {item}" for item in items])
+        return (
+            f"<div style='font-family: Inter, sans-serif; font-size: 12px; "
+            f"line-height: 160%; color: #000000; background-color: #FFFFFF; "
+            f"padding: 4px 6px; border-radius: 4px; white-space: nowrap; text-align: left;'>"
+            f"{formatted_items}</div>"
+        )
+
     def on_cell_entered(self, row: int, col: int):
         item = self.table.item(row, col)
         if item and item.toolTip():
+            if QToolTip.text() != item.toolTip():
+                QToolTip.hideText()
             QToolTip.showText(QCursor.pos(), item.toolTip(), self.table)
         else:
             QToolTip.hideText()
@@ -492,21 +503,29 @@ class SalesCancelView(QWidget):
                 }
             """)
 
+    def on_date_filter_changed(self):
+        self.is_date_filter_active = True
+        self.load_sales_data()
+
     def reset_date_filter(self):
+        self.is_date_filter_active = False
         self.date_filter.blockSignals(True)
         self.date_filter.setDate(QDate.currentDate())
         self.date_filter.blockSignals(False)
-        self.load_sales_data(use_date_filter=False)
+        self.load_sales_data()
 
-    def load_sales_data(self, use_date_filter: bool = True):
+    def load_sales_data(self, use_date_filter: bool = None):
+        if use_date_filter is not None:
+            self.is_date_filter_active = use_date_filter
+
         query = self.txt_search.text().strip()
-        date_str = self.date_filter.date().toString("yyyy-MM-dd") if use_date_filter else ""
+        date_str = self.date_filter.date().toString("yyyy-MM-dd") if self.is_date_filter_active else ""
 
         self.sales_list = self.db_manager.get_sales_cancel_list(query=query, date_str=date_str)
         self.render_table()
 
     def filter_sales_data(self):
-        self.load_sales_data(use_date_filter=True)
+        self.load_sales_data()
 
     def render_table(self):
         self.table.setRowCount(0)
@@ -543,24 +562,27 @@ class SalesCancelView(QWidget):
             item_svc.setTextAlignment(Qt.AlignCenter)
 
             if svc_list:
-                formatted_items = "<br>".join([f"• {s}" for s in svc_list])
-                tooltip_html = (
-                    f"<div style='font-family: Inter, sans-serif; font-size: 12px; "
-                    f"line-height: 160%; color: #000000; background-color: #FFFFFF; "
-                    f"padding: 4px 6px; border-radius: 4px; white-space: nowrap; text-align: left;'>"
-                    f"{formatted_items}</div>"
-                )
-                item_svc.setToolTip(tooltip_html)
+                item_svc.setToolTip(self._build_list_tooltip(svc_list))
 
             self.table.setItem(idx, 3, item_svc)
 
-            item_method = QTableWidgetItem(sale["payment_method"])
-            item_method.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(idx, 4, item_method)
-
             item_amt = QTableWidgetItem(f"{sale['total_amount']:,}")
             item_amt.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(idx, 5, item_amt)
+            self.table.setItem(idx, 4, item_amt)
+
+            method_text = sale["payment_method"]
+            method_list = sale.get("payment_methods_list") or sale.get("payments_list") or []
+
+            if not method_list and method_text and method_text != "-":
+                method_list = [m.strip() for m in re.split(r',\s*(?=[^\d])', method_text) if m.strip()]
+
+            item_method = QTableWidgetItem(method_text)
+            item_method.setTextAlignment(Qt.AlignCenter)
+
+            if method_list:
+                item_method.setToolTip(self._build_list_tooltip(method_list))
+
+            self.table.setItem(idx, 5, item_method)
 
             item_date = QTableWidgetItem(sale["visit_date"])
             item_date.setTextAlignment(Qt.AlignCenter)
@@ -600,7 +622,7 @@ class SalesCancelView(QWidget):
             visit_id = self.selected_sale["visit_id"]
             success, msg = self.db_manager.cancel_sale_transaction(visit_id)
             if success:
-                self.load_sales_data(use_date_filter=False)
+                self.load_sales_data()
             else:
                 from ui.sales_registration_view import CustomAlertDialog
                 CustomAlertDialog("오류", msg, self).exec()

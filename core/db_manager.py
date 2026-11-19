@@ -21,7 +21,7 @@ class DBManager:
         return conn
 
     def init_db(self):
-        """최신 9개 테이블 스키마 생성 및 개인정보/마케팅 동의 컬럼 마이그레이션 자동 수행"""
+        """최신 10개 테이블 스키마 생성 및 기존 DB 호환 자동 마이그레이션 수행"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
@@ -32,6 +32,7 @@ class DBManager:
                 name TEXT NOT NULL,
                 phone TEXT NOT NULL UNIQUE,
                 point INTEGER NOT NULL DEFAULT 0,
+                prepaid_balance INTEGER NOT NULL DEFAULT 0,
                 memo TEXT DEFAULT '',
                 is_consent INTEGER NOT NULL DEFAULT 0,
                 consent_at DATETIME,
@@ -80,7 +81,6 @@ class DBManager:
             else:
                 cursor.execute("UPDATE category SET is_system = 1 WHERE name = '선결제';")
 
-
             # 4. 시술 (service)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS service (
@@ -107,6 +107,7 @@ class DBManager:
                 original_amount INTEGER NOT NULL DEFAULT 0,
                 discount_amount INTEGER NOT NULL DEFAULT 0,
                 used_point INTEGER NOT NULL DEFAULT 0,
+                used_prepaid INTEGER NOT NULL DEFAULT 0,
                 total_amount INTEGER NOT NULL DEFAULT 0,
                 visited_at DATETIME DEFAULT (datetime('now', 'localtime')),
                 created_at DATETIME DEFAULT (datetime('now', 'localtime')),
@@ -145,7 +146,7 @@ class DBManager:
             );
             """)
 
-            # 8. 포인트 이력 (point_history)
+            # 8. 일반 포인트 이력 (point_history)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS point_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,7 +161,23 @@ class DBManager:
             );
             """)
 
-            # 9. 설정 (settings)
+            # 9. 선결제 이력 (prepaid_history)
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS prepaid_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER NOT NULL,
+                visit_id INTEGER,
+                amount INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                balance_after INTEGER NOT NULL DEFAULT 0,
+                description TEXT,
+                created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                FOREIGN KEY (customer_id) REFERENCES customer(id) ON DELETE RESTRICT,
+                FOREIGN KEY (visit_id) REFERENCES visit(id) ON DELETE SET NULL
+            );
+            """)
+
+            # 10. 설정 (settings)
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -215,13 +232,13 @@ class DBManager:
     # Customer (고객 관리) CRUD 헬퍼
     # -------------------------------------------------------------
     def get_all_customers(self):
-        """활성화된(is_active=1) 고객 목록과 개인정보 동의 상태 및 최근 방문일자 조회"""
+        """활성화된(is_active=1) 고객 목록, 선결제 잔액, 포인트, 동의 상태 및 최근 방문일자 조회"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute("""
                 SELECT 
-                    c.id, c.name, c.phone, c.point, c.memo, 
+                    c.id, c.name, c.phone, c.point, COALESCE(c.prepaid_balance, 0), c.memo, 
                     COALESCE(c.is_consent, 0), COALESCE(c.is_marketing_consent, 0),
                     COALESCE((
                         SELECT strftime('%Y-%m-%d', MAX(visited_at)) 
@@ -238,10 +255,11 @@ class DBManager:
                 "name": r[1],
                 "phone": r[2],
                 "point": r[3],
-                "memo": r[4] or "",
-                "is_consent": r[5],
-                "is_marketing_consent": r[6],
-                "recent_visit": r[7]
+                "prepaid_balance": r[4],
+                "memo": r[5] or "",
+                "is_consent": r[6],
+                "is_marketing_consent": r[7],
+                "recent_visit": r[8]
             } for r in rows]
         except Exception as e:
             print(f"[DB Error] get_all_customers: {e}")
@@ -324,8 +342,8 @@ class DBManager:
             m_now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if is_marketing_consent else None
             
             cursor.execute("""
-                INSERT INTO customer (name, phone, point, memo, is_consent, consent_at, is_marketing_consent, marketing_consent_at, is_active)
-                VALUES (?, ?, 0, ?, ?, ?, ?, ?, 1)
+                INSERT INTO customer (name, phone, point, prepaid_balance, memo, is_consent, consent_at, is_marketing_consent, marketing_consent_at, is_active)
+                VALUES (?, ?, 0, 0, ?, ?, ?, ?, ?, 1)
             """, (name, phone, memo, is_consent, now_str, is_marketing_consent, m_now_str))
             conn.commit()
             return True, ""
@@ -364,81 +382,88 @@ class DBManager:
             conn.close()
 
     def update_customer_consent(self, customer_id: int, is_consent: int = 1, is_marketing_consent: int = 0) -> bool:
-            """고객의 개인정보 수집 및 마케팅 동의 상태 DB 업데이트"""
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            try:
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                c_time = now_str if is_consent == 1 else None
-                m_time = now_str if is_marketing_consent == 1 else None
+        """고객의 개인정보 수집 및 마케팅 동의 상태 DB 업데이트"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            c_time = now_str if is_consent == 1 else None
+            m_time = now_str if is_marketing_consent == 1 else None
 
-                cursor.execute("""
-                    UPDATE customer
-                    SET is_consent = ?, consent_at = ?,
-                        is_marketing_consent = ?, marketing_consent_at = ?,
-                        updated_at = datetime('now', 'localtime')
-                    WHERE id = ? AND is_active = 1
-                """, (is_consent, c_time, is_marketing_consent, m_time, customer_id))
-                conn.commit()
-                return True
-            except Exception as e:
-                conn.rollback()
-                print(f"[DB Error] update_customer_consent: {e}")
-                return False
-            finally:
-                conn.close()
+            cursor.execute("""
+                UPDATE customer
+                SET is_consent = ?, consent_at = ?,
+                    is_marketing_consent = ?, marketing_consent_at = ?,
+                    updated_at = datetime('now', 'localtime')
+                WHERE id = ? AND is_active = 1
+            """, (is_consent, c_time, is_marketing_consent, m_time, customer_id))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] update_customer_consent: {e}")
+            return False
+        finally:
+            conn.close()
 
     def delete_customer(self, customer_id: int) -> bool:
-            """고객 삭제 처리 (개인정보보호법 준수를 위한 식별정보 익명화 및 매출 데이터 보존)"""
-            try:
-                customer_id = int(customer_id)
-            except (TypeError, ValueError):
-                return False
+        """고객 삭제 처리 (개인정보보호법 준수를 위한 식별정보 익명화 및 매출 데이터 보존)"""
+        try:
+            customer_id = int(customer_id)
+        except (TypeError, ValueError):
+            return False
 
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            try:
-                # 1. 개인식별정보(이름, 전화번호, 메모, 동의일시, 포인트) 익명화 및 파기
-                # 2. UNIQUE(phone) 제약조건 충돌 방지를 위해 고객 ID 기반 고유 가상번호 부여
-                cursor.execute("""
-                    UPDATE customer
-                    SET is_active = 0,
-                        name = '(삭제된 고객)',
-                        phone = '000-0000-' || printf('%04d', id),
-                        memo = '',
-                        point = 0,
-                        is_consent = 0,
-                        consent_at = NULL,
-                        is_marketing_consent = 0,
-                        marketing_consent_at = NULL,
-                        updated_at = datetime('now', 'localtime')
-                    WHERE id = ?
-                """, (customer_id,))
-                conn.commit()
-                return True
-            except Exception as e:
-                conn.rollback()
-                print(f"[DB Error] delete_customer: {e}")
-                return False
-            finally:
-                conn.close()
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE customer
+                SET is_active = 0,
+                    name = '(삭제된 고객)',
+                    phone = '000-0000-' || printf('%04d', id),
+                    memo = '',
+                    point = 0,
+                    prepaid_balance = 0,
+                    is_consent = 0,
+                    consent_at = NULL,
+                    is_marketing_consent = 0,
+                    marketing_consent_at = NULL,
+                    updated_at = datetime('now', 'localtime')
+                WHERE id = ?
+            """, (customer_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] delete_customer: {e}")
+            return False
+        finally:
+            conn.close()
 
     # -------------------------------------------------------------
-    # 매출 데이터 저장 및 방문 통계 헬퍼
+    # 매출 데이터 저장 및 선결제·포인트 이력 헬퍼
     # -------------------------------------------------------------
     def record_sale(self, customer_id: int, user_id: int, duration_minutes: int,
                     total_amount: int, used_point: int, earned_point: int,
-                    visited_at_str: str, memo: str, cart_items: list, payments_history: list) -> bool:
-        """매출 결제 완료 시 visit, visit_service, payment, point_history 등록 및 고객 정보 업데이트"""
+                    visited_at_str: str, memo: str, cart_items: list, payments_history: list,
+                    used_prepaid: int = 0, charged_prepaid: int = 0) -> bool:
+        """매출 결제 완료 시 visit, visit_service, payment, point_history, prepaid_history 등록 및 고객 잔액 업데이트"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute("BEGIN TRANSACTION;")
 
+            cursor.execute("SELECT COALESCE(prepaid_balance, 0) FROM customer WHERE id = ?", (customer_id,))
+            cust_row = cursor.fetchone()
+            curr_prepaid = cust_row[0] if cust_row else 0
+
             cursor.execute("""
-                INSERT INTO visit (customer_id, user_id, total_duration_minutes, original_amount, discount_amount, used_point, total_amount, visited_at)
-                VALUES (?, ?, ?, ?, 0, ?, ?, ?)
-            """, (customer_id, user_id, duration_minutes, total_amount, used_point, total_amount, visited_at_str))
+                INSERT INTO visit (
+                    customer_id, user_id, total_duration_minutes, original_amount,
+                    discount_amount, used_point, used_prepaid, total_amount, visited_at
+                )
+                VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+            """, (customer_id, user_id, duration_minutes, total_amount, used_point, used_prepaid, total_amount, visited_at_str))
             
             visit_id = cursor.lastrowid
 
@@ -454,6 +479,20 @@ class DBManager:
                     VALUES (?, ?, ?, ?)
                 """, (visit_id, p["amount"], p["method"], visited_at_str))
 
+            if used_prepaid > 0:
+                curr_prepaid = max(0, curr_prepaid - used_prepaid)
+                cursor.execute("""
+                    INSERT INTO prepaid_history (customer_id, visit_id, amount, type, balance_after, description)
+                    VALUES (?, ?, ?, 'USE', ?, '시술 결제 선결제 잔액 차감')
+                """, (customer_id, visit_id, -used_prepaid, curr_prepaid))
+
+            if charged_prepaid > 0:
+                curr_prepaid = curr_prepaid + charged_prepaid
+                cursor.execute("""
+                    INSERT INTO prepaid_history (customer_id, visit_id, amount, type, balance_after, description)
+                    VALUES (?, ?, ?, 'CHARGE', ?, '선결제 잔액 충전 (보너스 포함)')
+                """, (customer_id, visit_id, charged_prepaid, curr_prepaid))
+
             if used_point > 0:
                 cursor.execute("""
                     INSERT INTO point_history (customer_id, visit_id, amount, type, description)
@@ -463,14 +502,17 @@ class DBManager:
             if earned_point > 0:
                 cursor.execute("""
                     INSERT INTO point_history (customer_id, visit_id, amount, type, description)
-                    VALUES (?, ?, ?, 'EARN', '시술 결제 포인트 적립/충전')
+                    VALUES (?, ?, ?, 'EARN', '시술 결제 일반 포인트 적립')
                 """, (customer_id, visit_id, earned_point))
 
             cursor.execute("""
                 UPDATE customer
-                SET point = point - ? + ?, memo = ?, updated_at = datetime('now', 'localtime')
+                SET point = MAX(0, point - ? + ?),
+                    prepaid_balance = MAX(0, prepaid_balance - ? + ?),
+                    memo = ?,
+                    updated_at = datetime('now', 'localtime')
                 WHERE id = ? AND is_active = 1
-            """, (used_point, earned_point, memo, customer_id))
+            """, (used_point, earned_point, used_prepaid, charged_prepaid, memo, customer_id))
 
             conn.commit()
             return True
@@ -636,7 +678,7 @@ class DBManager:
     # Sales Cancel (결제 취소) 헬퍼
     # -------------------------------------------------------------
     def get_sales_cancel_list(self, query: str = "", date_str: str = ""):
-        """결제 취소 화면용 목록 조회"""
+        """결제 취소 화면용 목록 조회 (결제수단별 금액 상세 내역 및 선결제·포인트 내역 포함)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -675,7 +717,18 @@ class DBManager:
                     ), 0) AS used_point,
                     v.total_duration_minutes,
                     COALESCE(u.name, '-') AS designer_name,
-                    COALESCE(u.position, '') AS designer_position
+                    COALESCE(u.position, '') AS designer_position,
+                    COALESCE(v.used_prepaid, 0) AS used_prepaid,
+                    COALESCE((
+                        SELECT SUM(amount)
+                        FROM prepaid_history
+                        WHERE visit_id = v.id AND type = 'CHARGE'
+                    ), 0) AS charged_prepaid,
+                    COALESCE((
+                        SELECT GROUP_CONCAT(payment_method || '::' || amount, '|||')
+                        FROM payment
+                        WHERE visit_id = v.id
+                    ), '-') AS payment_details_raw
                 FROM visit v
                 JOIN customer c ON v.customer_id = c.id
                 LEFT JOIN user u ON v.user_id = u.id
@@ -707,6 +760,21 @@ class DBManager:
                     svc_list = []
                     display_services = "-"
 
+                raw_pay_details = r[15]
+                pay_detail_list = []
+                if raw_pay_details and raw_pay_details != '-':
+                    for entry in raw_pay_details.split('|||'):
+                        if '::' in entry:
+                            m_name, m_amt_str = entry.split('::', 1)
+                            try:
+                                m_amt = int(m_amt_str)
+                                unit = "P" if m_name == "포인트" else "원"
+                                pay_detail_list.append(f"{m_name} : {m_amt:,}{unit}")
+                            except ValueError:
+                                pay_detail_list.append(m_name.strip())
+                        elif entry.strip():
+                            pay_detail_list.append(entry.strip())
+
                 dur_min = r[10] or 0
                 if dur_min >= 60:
                     h = dur_min // 60
@@ -730,10 +798,13 @@ class DBManager:
                     "services": display_services,
                     "services_list": svc_list,
                     "payment_method": r[5],
+                    "payment_methods_list": pay_detail_list,
                     "total_amount": r[6],
                     "visit_date": r[7],
                     "earned_point": r[8],
                     "used_point": r[9],
+                    "used_prepaid": r[13],
+                    "charged_prepaid": r[14],
                     "duration_str": dur_str,
                     "designer_info": designer_str
                 })
@@ -745,18 +816,22 @@ class DBManager:
             conn.close()
 
     def cancel_sale_transaction(self, visit_id: int) -> tuple[bool, str]:
-        """결제 취소 트랜잭션"""
+        """결제 취소 트랜잭션 (일반 포인트 및 선결제 잔액 동시 원복)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute("BEGIN TRANSACTION;")
 
-            cursor.execute("SELECT customer_id FROM visit WHERE id = ?", (visit_id,))
+            cursor.execute("""
+                SELECT customer_id, COALESCE(used_point, 0), COALESCE(used_prepaid, 0)
+                FROM visit
+                WHERE id = ?
+            """, (visit_id,))
             row = cursor.fetchone()
             if not row:
                 conn.rollback()
                 return False, "존재하지 않는 결제 내역입니다."
-            customer_id = row[0]
+            customer_id, v_used_point, v_used_prepaid = row
 
             cursor.execute("""
                 SELECT 
@@ -767,18 +842,34 @@ class DBManager:
             """, (visit_id,))
             p_row = cursor.fetchone()
             earned_point = p_row[0] if p_row else 0
-            used_point = p_row[1] if p_row else 0
+            used_point = max(v_used_point, p_row[1] if p_row else 0)
+
+            cursor.execute("""
+                SELECT 
+                    COALESCE(SUM(CASE WHEN type = 'CHARGE' THEN amount ELSE 0 END), 0) AS charged,
+                    COALESCE(SUM(CASE WHEN type = 'USE' THEN ABS(amount) ELSE 0 END), 0) AS used
+                FROM prepaid_history
+                WHERE visit_id = ?
+            """, (visit_id,))
+            pr_row = cursor.fetchone()
+            charged_prepaid = pr_row[0] if pr_row else 0
+            used_prepaid = max(v_used_prepaid, pr_row[1] if pr_row else 0)
 
             net_point_change = used_point - earned_point
+            net_prepaid_change = used_prepaid - charged_prepaid
+
             cursor.execute("""
                 UPDATE customer
-                SET point = MAX(0, point + ?), updated_at = datetime('now', 'localtime')
+                SET point = MAX(0, point + ?),
+                    prepaid_balance = MAX(0, prepaid_balance + ?),
+                    updated_at = datetime('now', 'localtime')
                 WHERE id = ? AND is_active = 1
-            """, (net_point_change, customer_id))
+            """, (net_point_change, net_prepaid_change, customer_id))
 
             cursor.execute("DELETE FROM visit_service WHERE visit_id = ?", (visit_id,))
             cursor.execute("DELETE FROM payment WHERE visit_id = ?", (visit_id,))
             cursor.execute("DELETE FROM point_history WHERE visit_id = ?", (visit_id,))
+            cursor.execute("DELETE FROM prepaid_history WHERE visit_id = ?", (visit_id,))
             cursor.execute("DELETE FROM visit WHERE id = ?", (visit_id,))
 
             conn.commit()
@@ -956,7 +1047,6 @@ class DBManager:
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            # 이름은 변경하지 않고 position을 '퇴사'로 변경 (조회 시 '이름 (퇴사)'로 자동 포맷팅됨)
             cursor.execute("""
                 UPDATE user 
                 SET is_active = 0,
@@ -978,7 +1068,7 @@ class DBManager:
     # 매출 통계 분석 헬퍼 메서드
     # -------------------------------------------------------------
     def get_daily_sales_analysis(self):
-        """금일 매출 분석 4종 KPI 카드, 결제 수단별 금액/비율, 전월 대비 매출 비교 및 TOP3 시술 집계"""
+        """금일 매출 분석 4종 KPI 카드, 결제 수단별 금액/비율(카드/현금/선결제/포인트), 전월 대비 매출 비교 및 TOP3 시술 집계"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -1011,7 +1101,7 @@ class DBManager:
             all_sales = total_days_row[1]
             avg_daily_sales = int(all_sales / active_days) if active_days > 0 else 0
 
-            today_payments = {"카드": 0, "현금": 0, "포인트": 0}
+            today_payments = {"카드": 0, "현금": 0, "선결제": 0, "포인트": 0}
 
             cursor.execute("""
                 SELECT 
@@ -1029,17 +1119,21 @@ class DBManager:
                     today_payments["카드"] += amt
                 elif "현금" in pm or "cash" in pm:
                     today_payments["현금"] += amt
-                elif "포인트" in pm or "선결제" in pm or "point" in pm or "적립" in pm:
+                elif "선결제" in pm or "prepaid" in pm:
+                    today_payments["선결제"] += amt
+                elif "포인트" in pm or "point" in pm or "적립" in pm:
                     today_payments["포인트"] += amt
                 else:
                     today_payments["카드"] += amt
 
             cursor.execute("""
-                SELECT COALESCE(SUM(used_point), 0)
+                SELECT COALESCE(SUM(used_point), 0), COALESCE(SUM(used_prepaid), 0)
                 FROM visit
                 WHERE strftime('%Y-%m-%d', visited_at) = strftime('%Y-%m-%d', 'now', 'localtime')
             """)
-            v_used_point = cursor.fetchone()[0] or 0
+            v_used_row = cursor.fetchone()
+            v_used_point = v_used_row[0] or 0
+            v_used_prepaid = v_used_row[1] or 0
 
             cursor.execute("""
                 SELECT COALESCE(SUM(ABS(amount)), 0)
@@ -1049,16 +1143,26 @@ class DBManager:
             """)
             history_used_point = cursor.fetchone()[0] or 0
 
-            point_amt = max(today_payments["포인트"], v_used_point, history_used_point)
-            today_payments["포인트"] = point_amt
+            cursor.execute("""
+                SELECT COALESCE(SUM(ABS(amount)), 0)
+                FROM prepaid_history prh
+                JOIN visit v ON prh.visit_id = v.id
+                WHERE prh.type = 'USE' AND strftime('%Y-%m-%d', v.visited_at) = strftime('%Y-%m-%d', 'now', 'localtime')
+            """)
+            history_used_prepaid = cursor.fetchone()[0] or 0
+
+            today_payments["포인트"] = max(today_payments["포인트"], v_used_point, history_used_point)
+            today_payments["선결제"] = max(today_payments["선결제"], v_used_prepaid, history_used_prepaid)
 
             t_card = today_payments["카드"]
             t_cash = today_payments["현금"]
+            t_prepaid = today_payments["선결제"]
             t_point = today_payments["포인트"]
-            t_sum = t_card + t_cash + t_point
+            t_sum = t_card + t_cash + t_prepaid + t_point
 
             card_share = round((t_card / t_sum) * 100, 1) if t_sum > 0 else 0.0
             cash_share = round((t_cash / t_sum) * 100, 1) if t_sum > 0 else 0.0
+            prepaid_share = round((t_prepaid / t_sum) * 100, 1) if t_sum > 0 else 0.0
             point_share = round((t_point / t_sum) * 100, 1) if t_sum > 0 else 0.0
 
             now = datetime.now()
@@ -1132,6 +1236,8 @@ class DBManager:
                     "card_share": card_share,
                     "cash_amount": t_cash,
                     "cash_share": cash_share,
+                    "prepaid_amount": t_prepaid,
+                    "prepaid_share": prepaid_share,
                     "point_amount": t_point,
                     "point_share": point_share,
                 },
@@ -1151,6 +1257,7 @@ class DBManager:
                 "today_payments": {
                     "card_amount": 0, "card_share": 0.0,
                     "cash_amount": 0, "cash_share": 0.0,
+                    "prepaid_amount": 0, "prepaid_share": 0.0,
                     "point_amount": 0, "point_share": 0.0,
                 },
                 "this_month": 1, "this_month_sales": 0,
@@ -1172,13 +1279,13 @@ class DBManager:
                 designer_where = " AND v.user_id = ? "
                 params.append(designer_id)
 
-            # 1. 총매출, 방문수, 총 시술시간, 사용 포인트를 단일 쿼리로 통합 집계
             cursor.execute(f"""
                 SELECT 
                     COALESCE(SUM(v.total_amount), 0),
                     COUNT(DISTINCT v.id),
                     COALESCE(SUM(v.total_duration_minutes), 0),
-                    COALESCE(SUM(v.used_point), 0)
+                    COALESCE(SUM(v.used_point), 0),
+                    COALESCE(SUM(v.used_prepaid), 0)
                 FROM visit v
                 WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
             """, params)
@@ -1187,13 +1294,13 @@ class DBManager:
             visit_count = sales_row[1]
             total_duration = sales_row[2]
             v_used_point = sales_row[3]
+            v_used_prepaid = sales_row[4]
 
             d1 = datetime.strptime(start_date, "%Y-%m-%d")
             d2 = datetime.strptime(end_date, "%Y-%m-%d")
             days_span = (d2 - d1).days + 1
             avg_daily_sales = int(total_sales / days_span) if days_span > 0 else 0
 
-            # 2. 디자이너 기여도 계산 (전체 조회 시 중복 쿼리 생략)
             if is_all_designers:
                 contribution = 100.0 if total_sales > 0 else 0.0
             else:
@@ -1208,8 +1315,7 @@ class DBManager:
                 else:
                     contribution = 100.0 if total_sales > 0 else 0.0
 
-            # 3. 결제 수단별 합산
-            payments = {"카드": 0, "현금": 0, "포인트": 0}
+            payments = {"카드": 0, "현금": 0, "선결제": 0, "포인트": 0}
             cursor.execute(f"""
                 SELECT 
                     p.payment_method,
@@ -1227,15 +1333,18 @@ class DBManager:
                     payments["카드"] += amt
                 elif "현금" in pm or "cash" in pm:
                     payments["현금"] += amt
-                elif "포인트" in pm or "선결제" in pm or "point" in pm or "적립" in pm:
+                elif "선결제" in pm or "prepaid" in pm:
+                    payments["선결제"] += amt
+                elif "포인트" in pm or "point" in pm or "적립" in pm:
                     payments["포인트"] += amt
                 else:
                     payments["카드"] += amt
 
             if v_used_point > payments["포인트"]:
                 payments["포인트"] = v_used_point
+            if v_used_prepaid > payments["선결제"]:
+                payments["선결제"] = v_used_prepaid
 
-            # 4. 조회 기간에 따른 그래프 추이 집계
             trend_data = []
 
             if days_span == 1:
@@ -1311,14 +1420,14 @@ class DBManager:
             return {
                 "total_sales": 0, "visit_count": 0, "avg_daily_sales": 0,
                 "total_duration": 0, "contribution": 0.0,
-                "payments": {"카드": 0, "현금": 0, "포인트": 0},
+                "payments": {"카드": 0, "현금": 0, "선결제": 0, "포인트": 0},
                 "days_span": 1, "trend_data": []
             }
         finally:
             conn.close()
 
     def get_customers_csv_data(self):
-        """고객 정보 및 동의 내역 CSV 내보내기용 데이터 조회"""
+        """고객 정보, 선결제 잔액, 포인트 및 동의 내역 CSV 내보내기용 데이터 조회"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -1327,6 +1436,7 @@ class DBManager:
                     c.id AS 고객번호,
                     c.name AS 고객명,
                     c.phone AS 전화번호,
+                    COALESCE(c.prepaid_balance, 0) AS 선결제잔액,
                     c.point AS 보유포인트,
                     CASE WHEN c.is_consent = 1 THEN '동의' ELSE '미동의' END AS 필수동의여부,
                     COALESCE(strftime('%Y-%m-%d %H:%M:%S', c.consent_at), '-') AS 필수동의일시,
@@ -1357,6 +1467,7 @@ class DBManager:
                     c.phone AS 전화번호,
                     COALESCE(u.name, '-') AS 담당디자이너,
                     v.total_amount AS 결제금액,
+                    COALESCE(v.used_prepaid, 0) AS 사용선결제,
                     v.used_point AS 사용포인트,
                     v.total_duration_minutes AS 소요시간_분,
                     COALESCE((
