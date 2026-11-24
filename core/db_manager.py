@@ -189,6 +189,11 @@ class DBManager:
 
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('point_rate_general', '10');")
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('point_rate_prepaid', '20');")
+            cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('shop_name', '');")
+            cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('sms_enabled', '1');")
+            cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('sms_api_key', '');")
+            cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('sms_api_secret', '');")
+            cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('sms_sender_phone', '');")
 
             conn.commit()
 
@@ -264,6 +269,25 @@ class DBManager:
         except Exception as e:
             print(f"[DB Error] get_all_customers: {e}")
             return []
+        finally:
+            conn.close()
+
+    def get_customer_prepaid_status(self, customer_id: int) -> tuple[bool, int]:
+        """고객의 활성 여부(is_active == 1) 및 현재 선결제 잔액(prepaid_balance) 조회"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT COALESCE(is_active, 0), COALESCE(prepaid_balance, 0) FROM customer WHERE id = ?",
+                (int(customer_id),),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False, 0
+            return (row[0] == 1), int(row[1])
+        except Exception as e:
+            print(f"[DB Error] get_customer_prepaid_status: {e}")
+            return False, 0
         finally:
             conn.close()
 

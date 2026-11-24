@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QFont, QCursor, QColor, QPainterPath, QTextDocument
 from ui.theme import Colors, get_icon
 from core.db_manager import DBManager
+from core.sms_service import SmsSendWorker, build_prepaid_cancel_sms_payloads
 
 
 SCROLLBAR_STYLE = """
@@ -180,7 +181,7 @@ class ConfirmCancelSaleDialog(QDialog):
 
 
 class SalesCancelView(QWidget):
-    """결제취소 메인 뷰"""
+    """결제취소 메인 뷰 (UI 렌더링 및 백그라운드 워커 제어 전담)"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -188,6 +189,7 @@ class SalesCancelView(QWidget):
         self.sales_list = []
         self.selected_sale = None
         self.is_date_filter_active = True
+        self._sms_workers = []
 
         self.setup_ui()
         self.load_sales_data()
@@ -411,31 +413,24 @@ class SalesCancelView(QWidget):
 
         self.table.verticalScrollBar().setStyleSheet(SCROLLBAR_STYLE)
 
-        # 컬럼 가로폭 개별 최적화
         h_header = self.table.horizontalHeader()
         h_header.setSectionResizeMode(QHeaderView.Stretch)
 
-        # 1: 고객이름 (120px 고정)
         h_header.setSectionResizeMode(1, QHeaderView.Fixed)
         self.table.setColumnWidth(1, 120)
 
-        # 2: 전화번호 (140px 고정)
         h_header.setSectionResizeMode(2, QHeaderView.Fixed)
         self.table.setColumnWidth(2, 140)
 
-        # 3: 시술메뉴 (120px 고정)
         h_header.setSectionResizeMode(3, QHeaderView.Fixed)
         self.table.setColumnWidth(3, 120)
 
-        # 4: 결제금액 (130px 고정)
         h_header.setSectionResizeMode(4, QHeaderView.Fixed)
         self.table.setColumnWidth(4, 130)
 
-        # 5: 결제수단 (100px 고정)
         h_header.setSectionResizeMode(5, QHeaderView.Fixed)
         self.table.setColumnWidth(5, 100)
 
-        # 6: 결제일시 (150px 고정)
         h_header.setSectionResizeMode(6, QHeaderView.Fixed)
         self.table.setColumnWidth(6, 150)
 
@@ -617,12 +612,60 @@ class SalesCancelView(QWidget):
         if not self.selected_sale:
             return
 
-        dialog = ConfirmCancelSaleDialog(self.selected_sale, self)
+        sale_data = dict(self.selected_sale)
+        dialog = ConfirmCancelSaleDialog(sale_data, self)
         if dialog.exec() == QDialog.Accepted:
-            visit_id = self.selected_sale["visit_id"]
+            visit_id = sale_data["visit_id"]
             success, msg = self.db_manager.cancel_sale_transaction(visit_id)
             if success:
+                sms_queued = self._trigger_prepaid_cancel_sms(sale_data)
+                if sms_queued:
+                    from ui.sales_registration_view import CustomAlertDialog
+                    CustomAlertDialog(
+                        "결제 취소 완료",
+                        "결제 내역이 취소(삭제)되었으며,\n고객 휴대폰으로 선결제 취소 안내 문자가 자동 발송됩니다.",
+                        self,
+                    ).exec()
                 self.load_sales_data()
             else:
                 from ui.sales_registration_view import CustomAlertDialog
                 CustomAlertDialog("오류", msg, self).exec()
+
+    def _trigger_prepaid_cancel_sms(self, sale_data: dict) -> bool:
+        """선결제 취소 안내 문자 백그라운드 발송 (비즈니스/템플릿 처리는 sms_service 전담)"""
+        payload = build_prepaid_cancel_sms_payloads(self.db_manager, sale_data)
+        if not payload.get("should_send"):
+            return False
+
+        for msg_item in payload["messages"]:
+            worker = SmsSendWorker(
+                payload["api_key"],
+                payload["api_secret"],
+                payload["sender_phone"],
+                payload["to_phone"],
+                msg_item["text"],
+                self,
+            )
+            worker.finished_signal.connect(
+                lambda ok, err_msg, sms_type=msg_item["type"], w=worker: self._on_auto_sms_finished(
+                    ok, err_msg, sms_type, w
+                )
+            )
+            self._sms_workers.append(worker)
+            worker.start()
+
+        return True
+
+    def _on_auto_sms_finished(self, ok: bool, msg: str, sms_type: str, worker: SmsSendWorker):
+        """백그라운드 취소 안내 문자 발송 완료 콜백 (실패 시에만 경고 팝업 노출)"""
+        if worker in self._sms_workers:
+            self._sms_workers.remove(worker)
+        worker.deleteLater()
+
+        if not ok:
+            from ui.sales_registration_view import CustomAlertDialog
+            CustomAlertDialog(
+                "안내 문자 발송 실패",
+                f"결제 취소는 정상 완료되었으나\n[{sms_type}] 안내 문자 발송에 실패했습니다.\n\n사유: {msg}",
+                self,
+            ).exec()
