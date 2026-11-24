@@ -238,226 +238,247 @@ class SettingsConsentView(QWidget):
             """)
 
     def export_consent_pdf(self):
-            if not self.selected_customer:
-                return
+        if not self.selected_customer:
+            return
 
-            cust = self.selected_customer
-            c_name = cust["name"]
-            c_phone = cust["phone"]
-            
-            # 동의 여부에 따라 상태 및 일시 분기 처리
-            is_c = (cust["is_consent"] == 1)
-            is_m = (cust["is_marketing_consent"] == 1)
+        cust = self.selected_customer
+        c_name = cust["name"]
+        c_phone = cust["phone"]
 
-            c_status = "동의 완료 (전자 동의)" if is_c else "미동의"
-            m_status = "동의 완료 (전자 동의)" if is_m else "미동의"
+        # DB settings 테이블에서 등록된 매장명 조회
+        shop_name = (self.db_manager.get_setting("shop_name", default="") or "").strip()
 
-            # 미동의 시 시간을 출력하지 않고 '-' 처리
-            c_date = cust["consent_at"] if is_c else "-"
-            m_date = cust["marketing_consent_at"] if is_m else "-"
+        if shop_name:
+            purpose_subject = f"<b>{shop_name}</b> (HairMate 미용실 관리 시스템)"
+            shop_row_html = f"""
+                <tr>
+                    <th width="18%">수집·이용 매장</th>
+                    <td colspan="3" style="font-weight: bold; color: #00594C;">{shop_name}</td>
+                </tr>
+            """
+            brand_footer_html = f"""
+                <br>{shop_name}<br>
+                <span style="font-size: 9.5pt; font-weight: normal; color: #555555;">HairMate 미용실 관리 시스템</span>
+            """
+        else:
+            purpose_subject = "HairMate 미용실 관리 시스템"
+            shop_row_html = ""
+            brand_footer_html = "<br>HairMate 미용실 관리 시스템"
 
-            # 하단 확인 문구 분기
-            sign_status = "(전자 동의 완료)" if (is_c or is_m) else "(미동의)"
+        # 동의 여부에 따라 상태 및 일시 분기 처리
+        is_c = (cust["is_consent"] == 1)
+        is_m = (cust["is_marketing_consent"] == 1)
 
-            default_filename = f"개인정보및마케팅동의서_{c_name}_{c_phone.replace('-', '')}.pdf"
-            file_path, _ = QFileDialog.getSaveFileName(
-                self,
-                "개인정보 및 마케팅 동의서 PDF 저장",
-                default_filename,
-                "PDF Files (*.pdf)"
-            )
+        c_status = "동의 완료 (전자 동의)" if is_c else "미동의"
+        m_status = "동의 완료 (전자 동의)" if is_m else "미동의"
 
-            if not file_path:
-                return
+        # 미동의 시 시간을 출력하지 않고 '-' 처리
+        c_date = cust["consent_at"] if is_c else "-"
+        m_date = cust["marketing_consent_at"] if is_m else "-"
 
-            try:
-                printer = QPrinter(QPrinter.PrinterResolution)
-                printer.setOutputFormat(QPrinter.PdfFormat)
-                printer.setOutputFileName(file_path)
-                printer.setPageSize(QPageSize(QPageSize.A4))
+        # 하단 확인 문구 분기
+        sign_status = "(전자 동의 완료)" if (is_c or is_m) else "(미동의)"
 
-                html_content = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <style>
-                        body {{
-                            font-family: '맑은 고딕', 'Malgun Gothic', sans-serif;
-                            padding: 15pt 20pt;
-                            color: #111111;
-                        }}
-                        .main-title {{
-                            text-align: center;
-                            font-size: 22pt;
-                            font-weight: bold;
-                            color: #00594C;
-                            letter-spacing: 2pt;
-                            padding-bottom: 8pt;
-                            border-bottom: 2pt solid #00594C;
-                            margin-bottom: 20pt;
-                        }}
-                        .info-table {{
-                            width: 100%;
-                            border-collapse: collapse;
-                            margin-bottom: 18pt;
-                        }}
-                        .info-table th {{
-                            background-color: #EBF3F1;
-                            color: #00594C;
-                            font-size: 10pt;
-                            font-weight: bold;
-                            text-align: center;
-                            padding: 7pt 4pt;
-                        }}
-                        .info-table td {{
-                            font-size: 10pt;
-                            text-align: center;
-                            padding: 7pt 6pt;
-                            color: #222222;
-                        }}
-                        .section-header {{
-                            font-size: 11pt;
-                            font-weight: bold;
-                            color: #00594C;
-                            margin-top: 12pt;
-                            margin-bottom: 4pt;
-                        }}
-                        .section-body {{
-                            font-size: 9.5pt;
-                            line-height: 145%;
-                            color: #333333;
-                            padding-left: 8pt;
-                            margin-bottom: 6pt;
-                        }}
-                        .declaration-table {{
-                            width: 100%;
-                            border-collapse: collapse;
-                            margin-top: 20pt;
-                            background-color: #F8FAF9;
-                        }}
-                        .declaration-header {{
-                            background-color: #EBF3F1;
-                            text-align: center;
-                            font-size: 11pt;
-                            font-weight: bold;
-                            color: #111111;
-                            padding: 10pt 8pt;
-                        }}
-                        .sub-box {{
-                            background-color: #FFFFFF;
-                            text-align: center;
-                            padding: 10pt;
-                        }}
-                        .sub-box-title {{
-                            font-size: 9.5pt;
-                            font-weight: bold;
-                            color: #00594C;
-                            margin-bottom: 4pt;
-                        }}
-                        .sub-box-val {{
-                            font-size: 10pt;
-                            font-weight: bold;
-                            color: #222222;
-                        }}
-                        .sign-cell {{
-                            text-align: center;
-                            font-size: 10.5pt;
-                            padding: 12pt 8pt;
-                            background-color: #F8FAF9;
-                            color: #222222;
-                        }}
-                        .brand-logo {{
-                            text-align: right;
-                            margin-top: 25pt;
-                            font-size: 14pt;
-                            font-weight: bold;
-                            color: #00594C;
-                        }}
-                    </style>
-                </head>
-                <body>
-                    <div class="main-title">개인정보 수집 및 마케팅 활용 동의서<br></div>
+        default_filename = f"개인정보및마케팅동의서_{c_name}_{c_phone.replace('-', '')}.pdf"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "개인정보 및 마케팅 동의서 PDF 저장",
+            default_filename,
+            "PDF Files (*.pdf)"
+        )
 
-                    <!-- 상단 고객 정보 및 동의 상태 표 -->
-                    <table class="info-table" border="1" cellspacing="0" cellpadding="6" bordercolor="#A0A0A0">
-                        <tr>
-                            <th width="18%">고객 성명</th>
-                            <td width="32%">{c_name}</td>
-                            <th width="18%">전화번호</th>
-                            <td width="32%">{c_phone}</td>
-                        </tr>
-                        <tr>
-                            <th>[필수]<br>개인정보</th>
-                            <td><b style="color: #222222;">{c_status}</b><br><span style="font-size: 8.5pt; color: #555555;">({c_date})</span></td>
-                            <th>[선택]<br>마케팅 활용</th>
-                            <td><b style="color: #222222;">{m_status}</b><br><span style="font-size: 8.5pt; color: #555555;">({m_date})</span></td>
-                        </tr>
-                    </table>
+        if not file_path:
+            return
 
-                    <div class="section-header"><br>1. 개인정보 수집 및 이용 목적 (필수)</div>
-                    <div class="section-body">
-                        HairMate 미용실 관리 시스템을 통한 고객 회원 관리, 맞춤 헤어 시술 서비스 제공, 시술 이력 조회 및 상담, 포인트 적립·차감 관리, 주요 방문 및 예약 안내 메시지 발송
-                    </div>
+        try:
+            printer = QPrinter(QPrinter.PrinterResolution)
+            printer.setOutputFormat(QPrinter.PdfFormat)
+            printer.setOutputFileName(file_path)
+            printer.setPageSize(QPageSize(QPageSize.A4))
 
-                    <div class="section-header">2. 수집하는 개인정보 항목 (필수)</div>
-                    <div class="section-body">
-                        성명, 전화번호, 시술 내역, 결제 금액, 포인트 적립 및 사용 이력
-                    </div>
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {{
+                        font-family: '맑은 고딕', 'Malgun Gothic', sans-serif;
+                        padding: 15pt 20pt;
+                        color: #111111;
+                    }}
+                    .main-title {{
+                        text-align: center;
+                        font-size: 22pt;
+                        font-weight: bold;
+                        color: #00594C;
+                        letter-spacing: 2pt;
+                        padding-bottom: 8pt;
+                        border-bottom: 2pt solid #00594C;
+                        margin-bottom: 20pt;
+                    }}
+                    .info-table {{
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin-bottom: 18pt;
+                    }}
+                    .info-table th {{
+                        background-color: #EBF3F1;
+                        color: #00594C;
+                        font-size: 10pt;
+                        font-weight: bold;
+                        text-align: center;
+                        padding: 7pt 4pt;
+                    }}
+                    .info-table td {{
+                        font-size: 10pt;
+                        text-align: center;
+                        padding: 7pt 6pt;
+                        color: #222222;
+                    }}
+                    .section-header {{
+                        font-size: 11pt;
+                        font-weight: bold;
+                        color: #00594C;
+                        margin-top: 12pt;
+                        margin-bottom: 4pt;
+                    }}
+                    .section-body {{
+                        font-size: 9.5pt;
+                        line-height: 145%;
+                        color: #333333;
+                        padding-left: 8pt;
+                        margin-bottom: 6pt;
+                    }}
+                    .declaration-table {{
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin-top: 20pt;
+                        background-color: #F8FAF9;
+                    }}
+                    .declaration-header {{
+                        background-color: #EBF3F1;
+                        text-align: center;
+                        font-size: 11pt;
+                        font-weight: bold;
+                        color: #111111;
+                        padding: 10pt 8pt;
+                    }}
+                    .sub-box {{
+                        background-color: #FFFFFF;
+                        text-align: center;
+                        padding: 10pt;
+                    }}
+                    .sub-box-title {{
+                        font-size: 9.5pt;
+                        font-weight: bold;
+                        color: #00594C;
+                        margin-bottom: 4pt;
+                    }}
+                    .sub-box-val {{
+                        font-size: 10pt;
+                        font-weight: bold;
+                        color: #222222;
+                    }}
+                    .sign-cell {{
+                        text-align: center;
+                        font-size: 10.5pt;
+                        padding: 12pt 8pt;
+                        background-color: #F8FAF9;
+                        color: #222222;
+                    }}
+                    .brand-logo {{
+                        text-align: right;
+                        margin-top: 25pt;
+                        font-size: 14pt;
+                        font-weight: bold;
+                        color: #00594C;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="main-title">개인정보 수집 및 마케팅 활용 동의서<br></div>
 
-                    <div class="section-header">3. 개인정보 보유 및 이용 기간 (필수)</div>
-                    <div class="section-body">
-                        회원 등록일로부터 회원 탈퇴 요청 또는 고객 정보 삭제 처리 시까지 보유 및 이용합니다.<br>
-                        <span style="color: #666666;">(단, 관계 법령에 따라 보관이 필요한 경우 해당 법정 기간 동안 안전하게 보관됩니다.)</span>
-                    </div>
+                <!-- 상단 고객 정보 및 동의 상태 표 -->
+                <table class="info-table" border="1" cellspacing="0" cellpadding="6" bordercolor="#A0A0A0">
+                    {shop_row_html}
+                    <tr>
+                        <th width="18%">고객 성명</th>
+                        <td width="32%">{c_name}</td>
+                        <th width="18%">전화번호</th>
+                        <td width="32%">{c_phone}</td>
+                    </tr>
+                    <tr>
+                        <th>[필수]<br>개인정보</th>
+                        <td><b style="color: #222222;">{c_status}</b><br><span style="font-size: 8.5pt; color: #555555;">({c_date})</span></td>
+                        <th>[선택]<br>마케팅 활용</th>
+                        <td><b style="color: #222222;">{m_status}</b><br><span style="font-size: 8.5pt; color: #555555;">({m_date})</span></td>
+                    </tr>
+                </table>
 
-                    <div class="section-header">4. 마케팅 활용 및 광고성 정보 수신 동의 (선택)</div>
-                    <div class="section-body">
-                        신규 시술 안내, 할인 쿠폰 발송, 맞춤형 이벤트 홍보 등 마케팅 목적의 SMS/LMS 안내 문자 발송에 동의합니다.<br>
-                        <span style="color: #666666;">※ 선택 항목에 동의하지 않으셔도 일반 회원 서비스 및 포인트 적립 이용에는 아무런 제한이 없습니다.</span>
-                    </div>
+                <div class="section-header"><br>1. 개인정보 수집 및 이용 목적 (필수)</div>
+                <div class="section-body">
+                    {purpose_subject}을 통한 고객 회원 관리, 맞춤 헤어 시술 서비스 제공, 시술 이력 조회 및 상담, 포인트 적립·차감 관리, 주요 방문 및 예약 안내 메시지 발송
+                </div>
 
-                    <div class="section-header">5. 클라우드 백업 및 보안 관리</div>
-                    <div class="section-body">
-                        수집된 개인정보 데이터는 암호화(AES-256 / Fernet) 처리되어 Google Drive 클라우드 백업 시스템을 통해 안전하게 보관 및 관리됩니다. <br>
-                    </div>
+                <div class="section-header">2. 수집하는 개인정보 항목 (필수)</div>
+                <div class="section-body">
+                    성명, 전화번호, 시술 내역, 결제 금액, 포인트 적립 및 사용 이력
+                </div>
 
-                    <!-- 하단 동의 선언 및 전자 동의 확약 박스 -->
-                    <table class="declaration-table" border="1" cellspacing="0" cellpadding="0" bordercolor="#00594C">
-                        <tr>
-                            <td colspan="2" class="declaration-header">
-                                본인은 위 개인정보 수집·이용 및 마케팅 활용 안내 사항을 확인하였습니다.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td width="50%" class="sub-box" style="border-right: 1px solid #00594C; border-bottom: 1px solid #00594C;">
-                                <div class="sub-box-title">[필수] 개인정보 수집·이용</div>
-                                <div class="sub-box-val">{c_status}</div>
-                            </td>
-                            <td width="50%" class="sub-box" style="border-bottom: 1px solid #00594C;">
-                                <div class="sub-box-title">[선택] 마케팅 정보 수신</div>
-                                <div class="sub-box-val">{m_status}</div>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td colspan="2" class="sign-cell">
-                                <b>동의자 성명 :</b> {c_name} &nbsp;&nbsp;<b>{sign_status}</b>
-                            </td>
-                        </tr>
-                    </table>
+                <div class="section-header">3. 개인정보 보유 및 이용 기간 (필수)</div>
+                <div class="section-body">
+                    회원 등록일로부터 회원 탈퇴 요청 또는 고객 정보 삭제 처리 시까지 보유 및 이용합니다.<br>
+                    <span style="color: #666666;">(단, 관계 법령에 따라 보관이 필요한 경우 해당 법정 기간 동안 안전하게 보관됩니다.)</span>
+                </div>
 
-                    <div class="brand-logo">
-                        <br>HairMate 미용실 관리 시스템
-                    </div>
-                </body>
-                </html>
-                """
+                <div class="section-header">4. 마케팅 활용 및 광고성 정보 수신 동의 (선택)</div>
+                <div class="section-body">
+                    신규 시술 안내, 할인 쿠폰 발송, 맞춤형 이벤트 홍보 등 마케팅 목적의 SMS/LMS 안내 문자 발송에 동의합니다.<br>
+                    <span style="color: #666666;">※ 선택 항목에 동의하지 않으셔도 일반 회원 서비스 및 포인트 적립 이용에는 아무런 제한이 없습니다.</span>
+                </div>
 
-                doc = QTextDocument()
-                doc.setPageSize(printer.pageRect(QPrinter.Point).size())
-                doc.setHtml(html_content)
-                doc.print_(printer)
+                <div class="section-header">5. 클라우드 백업 및 보안 관리</div>
+                <div class="section-body">
+                    수집된 개인정보 데이터는 암호화(AES-256 / Fernet) 처리되어 Google Drive 클라우드 백업 시스템을 통해 안전하게 보관 및 관리됩니다. <br>
+                </div>
 
-                CustomAlertDialog("출력 완료", f"'{c_name}' 고객의 개인정보 및 마케팅 동의서가 저장되었습니다.\n\n저장 경로:\n{file_path}", self).exec()
+                <!-- 하단 동의 선언 및 전자 동의 확약 박스 -->
+                <table class="declaration-table" border="1" cellspacing="0" cellpadding="0" bordercolor="#00594C">
+                    <tr>
+                        <td colspan="2" class="declaration-header">
+                            본인은 위 개인정보 수집·이용 및 마케팅 활용 안내 사항을 확인하였습니다.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td width="50%" class="sub-box" style="border-right: 1px solid #00594C; border-bottom: 1px solid #00594C;">
+                            <div class="sub-box-title">[필수] 개인정보 수집·이용</div>
+                            <div class="sub-box-val">{c_status}</div>
+                        </td>
+                        <td width="50%" class="sub-box" style="border-bottom: 1px solid #00594C;">
+                            <div class="sub-box-title">[선택] 마케팅 정보 수신</div>
+                            <div class="sub-box-val">{m_status}</div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td colspan="2" class="sign-cell">
+                            <b>동의자 성명 :</b> {c_name} &nbsp;&nbsp;<b>{sign_status}</b>
+                        </td>
+                    </tr>
+                </table>
 
-            except Exception as e:
-                CustomAlertDialog("출력 오류", f"PDF 파일 생성 중 오류가 발생했습니다:\n\n{str(e)}", self).exec()
+                <div class="brand-logo">
+                    {brand_footer_html}
+                </div>
+            </body>
+            </html>
+            """
+
+            doc = QTextDocument()
+            doc.setPageSize(printer.pageRect(QPrinter.Point).size())
+            doc.setHtml(html_content)
+            doc.print_(printer)
+
+            CustomAlertDialog("출력 완료", f"'{c_name}' 고객의 개인정보 및 마케팅 동의서가 저장되었습니다.\n\n저장 경로:\n{file_path}", self).exec()
+
+        except Exception as e:
+            CustomAlertDialog("출력 오류", f"PDF 파일 생성 중 오류가 발생했습니다:\n\n{str(e)}", self).exec()

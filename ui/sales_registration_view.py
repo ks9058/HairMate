@@ -11,7 +11,9 @@ from PySide6.QtCore import Qt, QDate, Signal, QTimer
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QTextDocument, QPixmap
 from ui.theme import Colors, get_icon
 from core.db_manager import DBManager
-
+from ui.theme import Colors, get_icon
+from core.db_manager import DBManager
+from core.sms_service import SmsSendWorker, DEFAULT_TEMPLATES, render_sms_template
 
 def get_resource_arrow_path(direction: str = "down") -> str:
     """프로젝트 루트의 resources 폴더에 깔끔한 화살표 PNG를 생성하고 절대 경로 반환"""
@@ -792,7 +794,8 @@ class SalesRegistrationView(QWidget):
         self.total_amount = 0
         self.remaining_amount = 0
         self.payments_history = []  # 현금/카드 분할결제 내역 기록
-
+        self._sms_workers = []      # 백그라운드 문자 발송 스레드 보관
+        
         self.setup_ui()
         self.load_customer_list()
         self.load_menu_data()
@@ -2194,7 +2197,7 @@ class SalesRegistrationView(QWidget):
             self.sync_balances_and_status(reset_received=True)
 
     def _finalize_sale_to_db(self, change_amt: int = 0):
-        """최종 결제 수단 합산 후 DB 저장 및 완료 안내"""
+        """최종 결제 수단 합산 후 DB 저장, 선결제 안내 문자 자동 발송 및 완료 안내"""
         use_prepaid = self._parse_int(self.txt_use_prepaid.text())
         use_point = self._parse_int(self.txt_use_point.text())
         earned_point, charged_prepaid = self.calculate_expected_rewards()
@@ -2206,6 +2209,8 @@ class SalesRegistrationView(QWidget):
             final_payments.append({"method": "포인트", "amount": use_point})
 
         cust_id = self.selected_customer["id"]
+        cust_name = self.selected_customer.get("name", "")
+        cust_phone = self.selected_customer.get("phone", "")
         new_memo = self.txt_info_memo.toPlainText().strip()
         designer_id = self.cb_designer.currentData()
         duration_minutes = self.spn_duration.value()
@@ -2237,6 +2242,17 @@ class SalesRegistrationView(QWidget):
         final_prepaid = max(0, prev_prepaid - use_prepaid + charged_prepaid)
         final_point = max(0, prev_point - use_point + earned_point)
 
+        # 선결제 사용 또는 충전 시 자동 안내 문자 발송 트리거
+        sms_queued = self._trigger_prepaid_sms(
+            customer_name=cust_name,
+            customer_phone=cust_phone,
+            visited_at_str=visited_at_str,
+            cart_items=list(self.cart_items),
+            use_prepaid=use_prepaid,
+            charged_prepaid=charged_prepaid,
+            final_prepaid=final_prepaid,
+        )
+
         msg = f"결제가 성공적으로 완료되었습니다!\n\n• 총 결제 금액: {self.total_amount:,}원"
         if use_prepaid > 0:
             msg += f"\n• 선결제 차감: -{use_prepaid:,}원"
@@ -2252,8 +2268,86 @@ class SalesRegistrationView(QWidget):
 
         if change_amt > 0:
             msg += f"\n\n※ 거스름돈: {change_amt:,}원"
+        if sms_queued:
+            msg += "\n\n※ 고객 휴대폰으로 선결제 안내 문자가 자동 발송됩니다."
 
         CustomAlertDialog("결제 완료", msg, self).exec()
 
         self.load_customer_list()
         self.clear_customer_selection()
+
+    def _trigger_prepaid_sms(
+        self,
+        customer_name: str,
+        customer_phone: str,
+        visited_at_str: str,
+        cart_items: list,
+        use_prepaid: int,
+        charged_prepaid: int,
+        final_prepaid: int,
+    ) -> bool:
+        """선결제 사용/충전 발생 시 설정에 따라 백그라운드로 안내 문자 발송"""
+        if use_prepaid <= 0 and charged_prepaid <= 0:
+            return False
+
+        if self.db_manager.get_setting("sms_enabled", default="1") != "1":
+            return False
+
+        api_key = self.db_manager.get_setting("sms_api_key", default="").strip()
+        api_secret = self.db_manager.get_setting("sms_api_secret", default="").strip()
+        sender_phone = self.db_manager.get_setting("sms_sender_phone", default="").strip()
+        shop_name = self.db_manager.get_setting("shop_name", default="").strip() or "헤어살롱"
+
+        if not api_key or not api_secret or not sender_phone or not customer_phone:
+            return False
+
+        # 일반 시술명 조합 (선결제 충전 상품 제외 우선, 없으면 전체 항목)
+        non_prepaid_items = [i for i in cart_items if i.get("category_name") != "선결제"]
+        target_items = non_prepaid_items if non_prepaid_items else cart_items
+        service_names = [
+            f"{i['name']}({i['qty']}개)" if i.get("qty", 1) > 1 else i["name"]
+            for i in target_items
+        ]
+        service_str = ", ".join(service_names) if service_names else "시술"
+
+        context = {
+            "매장명": shop_name,
+            "고객명": customer_name,
+            "방문일시": visited_at_str[:16],  # YYYY-MM-DD HH:MM
+            "시술명": service_str,
+            "사용금액": f"{use_prepaid:,}",
+            "충전금액": f"{charged_prepaid:,}",
+            "잔여금액": f"{final_prepaid:,}",
+        }
+
+        messages_to_send = []
+        if use_prepaid > 0:
+            tpl_use = self.db_manager.get_setting("sms_template_use", default=DEFAULT_TEMPLATES["use"])
+            messages_to_send.append(("선결제 사용", render_sms_template(tpl_use, context)))
+
+        if charged_prepaid > 0:
+            tpl_charge = self.db_manager.get_setting("sms_template_charge", default=DEFAULT_TEMPLATES["charge"])
+            messages_to_send.append(("선결제 충전", render_sms_template(tpl_charge, context)))
+
+        for label, text in messages_to_send:
+            worker = SmsSendWorker(api_key, api_secret, sender_phone, customer_phone, text, self)
+            worker.finished_signal.connect(
+                lambda ok, err_msg, sms_type=label, w=worker: self._on_auto_sms_finished(ok, err_msg, sms_type, w)
+            )
+            self._sms_workers.append(worker)
+            worker.start()
+
+        return len(messages_to_send) > 0
+
+    def _on_auto_sms_finished(self, ok: bool, msg: str, sms_type: str, worker: SmsSendWorker):
+        """백그라운드 자동 문자 발송 완료 콜백 (실패 시에만 경고 팝업 노출)"""
+        if worker in self._sms_workers:
+            self._sms_workers.remove(worker)
+        worker.deleteLater()
+
+        if not ok:
+            CustomAlertDialog(
+                "안내 문자 발송 실패",
+                f"매출 결제는 정상 저장되었으나\n[{sms_type}] 안내 문자 발송에 실패했습니다.\n\n사유: {msg}",
+                self,
+            ).exec()

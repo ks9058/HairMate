@@ -19,6 +19,7 @@ from ui.settings_designer_view import SettingsDesignerView
 from ui.settings_backup_restore import SettingsBackupRestoreView
 from ui.settings_consent_view import SettingsConsentView
 from ui.settings_csv_export_view import SettingsCsvExportView
+from ui.settings_message_management_view import MessageManagementView
 
 
 class AutoBackupExitWorker(QThread):
@@ -271,6 +272,7 @@ class MainWindow(QMainWindow):
         self.btn_sub_consent = SidebarButton("동의서 출력", is_sub=True)
         self.btn_sub_csv = SidebarButton("CSV 내보내기", is_sub=True)
         self.btn_sub_backup_restore = SidebarButton("백업 및 복원", is_sub=True)
+        self.btn_sub_message = SidebarButton("문자 전송 관리", is_sub=True)
 
         self.sub_buttons = [
             self.btn_sub_google, 
@@ -279,7 +281,8 @@ class MainWindow(QMainWindow):
             self.btn_sub_category,
             self.btn_sub_consent, 
             self.btn_sub_csv,
-            self.btn_sub_backup_restore
+            self.btn_sub_backup_restore,
+            self.btn_sub_message
         ]
 
         for btn in self.sub_buttons:
@@ -376,6 +379,9 @@ class MainWindow(QMainWindow):
 
         self.csv_export_setting_page = SettingsCsvExportView()
         self.stack.addWidget(self.csv_export_setting_page)
+
+        self.message_setting_page = MessageManagementView()
+        self.stack.addWidget(self.message_setting_page)
 
         self.btn_top_back.clicked.connect(self.handle_top_back_click)
 
@@ -479,6 +485,9 @@ class MainWindow(QMainWindow):
             self.stack.setCurrentWidget(self.consent_setting_page)
         elif target_btn == self.btn_sub_csv:  
             self.stack.setCurrentWidget(self.csv_export_setting_page)
+        elif target_btn == self.btn_sub_message:
+            self.message_setting_page.load_settings()
+            self.stack.setCurrentWidget(self.message_setting_page)
 
     def _finalize_exit(self):
         """백업 모달 종료 후 다음 이벤트 루프에서 메인 창 및 앱 완전 종료"""
