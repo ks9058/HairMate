@@ -11,9 +11,8 @@ from PySide6.QtCore import Qt, QDate, Signal, QTimer
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QTextDocument, QPixmap
 from ui.theme import Colors, get_icon
 from core.db_manager import DBManager
-from ui.theme import Colors, get_icon
-from core.db_manager import DBManager
 from core.sms_service import SmsSendWorker, DEFAULT_TEMPLATES, render_sms_template
+
 
 def get_resource_arrow_path(direction: str = "down") -> str:
     """프로젝트 루트의 resources 폴더에 깔끔한 화살표 PNG를 생성하고 절대 경로 반환"""
@@ -786,6 +785,7 @@ class SalesRegistrationView(QWidget):
         super().__init__(parent)
         self.db_manager = DBManager()
         self.selected_customer = None
+        self.pending_reservation_id = None
         self.cart_items = []
         self.categories_data = []
         self.services_map = {}
@@ -940,7 +940,7 @@ class SalesRegistrationView(QWidget):
         left_s_layout.setContentsMargins(0, 0, 0, 0)
         left_s_layout.setSpacing(0)
 
-        # 좌측 통합 회색 패널 (담당 디자이너 행 + 고객 정보 행 + 결제탭 + 결제하기 버튼 포함)
+        # 좌측 통합 회색 패널
         left_sales_outer = QFrame(left_sales_panel)
         left_sales_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         left_sales_outer.setAttribute(Qt.WA_StyledBackground, True)
@@ -1295,7 +1295,7 @@ class SalesRegistrationView(QWidget):
 
         left_outer_layout.addWidget(c_inner, 1)
 
-        # 3. 통합 결제 정보 카드 (선결제 잔액 사용 · 포인트 사용 독립 입력)
+        # 3. 통합 결제 정보 카드
         pay_card = QFrame(left_sales_outer)
         pay_card.setStyleSheet(f"background-color: #FFFFFF; border: 2px solid {Colors.PRIMARY}; border-radius: 6px;")
         pay_card.setAttribute(Qt.WA_StyledBackground, True)
@@ -1303,7 +1303,6 @@ class SalesRegistrationView(QWidget):
         pay_card_layout.setContentsMargins(14, 12, 14, 12)
         pay_card_layout.setSpacing(7)
 
-        # 총 결제 금액
         r_total = QHBoxLayout()
         lbl_t_title = QLabel("총 결제 금액 :", pay_card)
         lbl_t_title.setFont(QFont("Inter", 12, QFont.Bold))
@@ -1342,7 +1341,6 @@ class SalesRegistrationView(QWidget):
             }}
         """
 
-        # 선결제 잔액 사용
         r_prepaid = QHBoxLayout()
         r_prepaid.setSpacing(5)
         lbl_pr_title = QLabel("선결제 잔액 사용 :", pay_card)
@@ -1374,7 +1372,6 @@ class SalesRegistrationView(QWidget):
         r_prepaid.addWidget(self.btn_use_all_prepaid)
         pay_card_layout.addLayout(r_prepaid)
 
-        # 포인트 사용
         r_point = QHBoxLayout()
         r_point.setSpacing(5)
         lbl_pt_title = QLabel("포인트 사용 :", pay_card)
@@ -1406,7 +1403,6 @@ class SalesRegistrationView(QWidget):
         r_point.addWidget(self.btn_use_all_point)
         pay_card_layout.addLayout(r_point)
 
-        # 할인/차감 합계
         r_deduct = QHBoxLayout()
         lbl_dd_title = QLabel("할인/차감 :", pay_card)
         lbl_dd_title.setFont(QFont("Inter", 9, QFont.Bold))
@@ -1421,13 +1417,11 @@ class SalesRegistrationView(QWidget):
         r_deduct.addWidget(self.lbl_deduct_amount, 1)
         pay_card_layout.addLayout(r_deduct)
 
-        # 구분선
         divider = QFrame(pay_card)
         divider.setFixedHeight(1)
         divider.setStyleSheet("background-color: #DCDCDC; border: none;")
         pay_card_layout.addWidget(divider)
 
-        # 받을 금액 (카드/현금)
         r_recv = QHBoxLayout()
         r_recv.setSpacing(5)
         lbl_rc_title = QLabel("받을 금액(카드/현금) :", pay_card)
@@ -1461,7 +1455,6 @@ class SalesRegistrationView(QWidget):
         r_recv.addWidget(lbl_won_unit)
         pay_card_layout.addLayout(r_recv)
 
-        # 남은 금액 / 거스름돈
         r_status = QHBoxLayout()
         self.lbl_status_title = QLabel("남은금액 :", pay_card)
         self.lbl_status_title.setFont(QFont("Inter", 12, QFont.Bold))
@@ -1476,7 +1469,6 @@ class SalesRegistrationView(QWidget):
         r_status.addWidget(self.lbl_status_val, 1)
         pay_card_layout.addLayout(r_status)
 
-        # 적립 / 충전 예정 안내
         r_earn_point = QHBoxLayout()
         self.lbl_earn_title = QLabel("적립 예정 포인트 :", pay_card)
         self.lbl_earn_title.setFont(QFont("Inter", 9, QFont.Bold))
@@ -1491,7 +1483,6 @@ class SalesRegistrationView(QWidget):
         r_earn_point.addWidget(self.lbl_earn_point_val, 1)
         pay_card_layout.addLayout(r_earn_point)
 
-        # 분할결제 진행 내역 요약 (가로 스크롤 지원)
         self.history_scroll = HorizontalScrollArea(pay_card)
         self.history_scroll.setFixedHeight(26)
         self.history_scroll.setMinimumWidth(0)
@@ -1511,7 +1502,7 @@ class SalesRegistrationView(QWidget):
 
         left_outer_layout.addWidget(pay_card)
 
-        # 4. 단일 [결제하기] 버튼 (좌측 회색 바탕 내부에 포함)
+        # 4. 단일 [결제하기] 버튼
         self.btn_pay_submit = QPushButton("결제하기", left_sales_outer)
         self.btn_pay_submit.setFixedHeight(44)
         self.btn_pay_submit.setCursor(Qt.PointingHandCursor)
@@ -1541,7 +1532,6 @@ class SalesRegistrationView(QWidget):
         right_s_layout.setContentsMargins(0, 0, 0, 0)
         right_s_layout.setSpacing(10)
 
-        # 카테고리 탭 및 시술 메뉴 그리드 (상단)
         menu_outer = QFrame(right_sales_panel)
         menu_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         menu_outer.setAttribute(Qt.WA_StyledBackground, True)
@@ -1595,7 +1585,6 @@ class SalesRegistrationView(QWidget):
         menu_o_layout.addWidget(menu_inner, 1)
         right_s_layout.addWidget(menu_outer, 1)
 
-        # 장바구니 영역 패널 (하단)
         cart_outer = QFrame(right_sales_panel)
         cart_outer.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
         cart_outer.setAttribute(Qt.WA_StyledBackground, True)
@@ -1838,6 +1827,7 @@ class SalesRegistrationView(QWidget):
         target_cust = next((c for c in self.all_customers if int(c["id"]) == int(cust_id)), None)
 
         if target_cust:
+            self.pending_reservation_id = None
             self.selected_customer = dict(target_cust)
             self.lbl_info_name.setText(self.selected_customer["name"])
             self.lbl_info_phone.setText(self.selected_customer["phone"])
@@ -1858,6 +1848,11 @@ class SalesRegistrationView(QWidget):
             self.page_changed.emit(True)
 
     def clear_customer_selection(self):
+        # 결제를 완료하지 않고 뒤로가기로 취소한 경우, 연동된 예약은 '예약완료' 상태로 유지
+        if getattr(self, "pending_reservation_id", None):
+            self.db_manager.update_reservation_status(self.pending_reservation_id, "예약완료")
+            self.pending_reservation_id = None
+
         self.selected_customer = None
         self.cust_table.clearSelection()
         self.cart_items.clear()
@@ -1890,7 +1885,6 @@ class SalesRegistrationView(QWidget):
         already_cash_card = sum(p["amount"] for p in self.payments_history)
         use_point = self._parse_int(self.txt_use_point.text())
 
-        # 선결제 충전 상품은 선결제 잔액으로 재결제 불가하도록 일반 시술 금액 한도 적용
         non_prepaid_total = self._get_non_prepaid_cart_total()
         max_for_prepaid = max(0, non_prepaid_total - use_point - already_cash_card)
         target_val = min(avail_prepaid, max_for_prepaid)
@@ -1954,11 +1948,7 @@ class SalesRegistrationView(QWidget):
         self.recalculate_payment_status()
 
     def calculate_expected_rewards(self) -> tuple[int, int]:
-        """
-        장바구니 기준 (일반 적립 예정 포인트, 충전 예정 선결제 금액) 계산
-        - '선결제' 카테고리 시술: 원금 + 보너스(point_rate_prepaid) 합산하여 선결제 잔액 충전 (일반 포인트 이중 적립 제외)
-        - 일반 시술: 선결제 잔액 사용 여부와 무관하게 일반 포인트 별도 적립 (단, 무료 포인트 사용분은 제외)
-        """
+        """장바구니 기준 (일반 적립 예정 포인트, 충전 예정 선결제 금액) 계산"""
         if self.total_amount <= 0 or not self.cart_items:
             return 0, 0
 
@@ -2130,7 +2120,6 @@ class SalesRegistrationView(QWidget):
             CustomAlertDialog("결제 오류", "장바구니에 담긴 시술이 없습니다.", self).exec()
             return
 
-        # 이관 고객 및 미동의 고객 첫 결제 시 동의 모달 팝업
         if self.selected_customer and self.selected_customer.get("is_consent", 0) == 0:
             c_name = self.selected_customer.get("name", "")
             c_phone = self.selected_customer.get("phone", "")
@@ -2197,7 +2186,7 @@ class SalesRegistrationView(QWidget):
             self.sync_balances_and_status(reset_received=True)
 
     def _finalize_sale_to_db(self, change_amt: int = 0):
-        """최종 결제 수단 합산 후 DB 저장, 선결제 안내 문자 자동 발송 및 완료 안내"""
+        """최종 결제 수단 합산 후 DB 저장, 예약 방문완료 확정, 선결제 안내 문자 자동 발송"""
         use_prepaid = self._parse_int(self.txt_use_prepaid.text())
         use_point = self._parse_int(self.txt_use_point.text())
         earned_point, charged_prepaid = self.calculate_expected_rewards()
@@ -2237,12 +2226,16 @@ class SalesRegistrationView(QWidget):
             CustomAlertDialog("저장 오류", "DB 매출 저장 중 오류가 발생했습니다.", self).exec()
             return
 
+        # 예약에서 연동된 결제인 경우 결제가 완료된 시점에 '방문완료'로 확정
+        if getattr(self, "pending_reservation_id", None):
+            self.db_manager.update_reservation_status(self.pending_reservation_id, "방문완료")
+            self.pending_reservation_id = None
+
         prev_prepaid = self.selected_customer.get("prepaid_balance", 0)
         prev_point = self.selected_customer.get("point", 0)
         final_prepaid = max(0, prev_prepaid - use_prepaid + charged_prepaid)
         final_point = max(0, prev_point - use_point + earned_point)
 
-        # 선결제 사용 또는 충전 시 자동 안내 문자 발송 트리거
         sms_queued = self._trigger_prepaid_sms(
             customer_name=cust_name,
             customer_phone=cust_phone,
@@ -2301,7 +2294,6 @@ class SalesRegistrationView(QWidget):
         if not api_key or not api_secret or not sender_phone or not customer_phone:
             return False
 
-        # 일반 시술명 조합 (선결제 충전 상품 제외 우선, 없으면 전체 항목)
         non_prepaid_items = [i for i in cart_items if i.get("category_name") != "선결제"]
         target_items = non_prepaid_items if non_prepaid_items else cart_items
         service_names = [
@@ -2313,7 +2305,7 @@ class SalesRegistrationView(QWidget):
         context = {
             "매장명": shop_name,
             "고객명": customer_name,
-            "방문일시": visited_at_str[:16],  # YYYY-MM-DD HH:MM
+            "방문일시": visited_at_str[:16],
             "시술명": service_str,
             "사용금액": f"{use_prepaid:,}",
             "충전금액": f"{charged_prepaid:,}",
@@ -2351,3 +2343,116 @@ class SalesRegistrationView(QWidget):
                 f"매출 결제는 정상 저장되었으나\n[{sms_type}] 안내 문자 발송에 실패했습니다.\n\n사유: {msg}",
                 self,
             ).exec()
+
+    def load_from_reservation(self, payload: dict):
+        """예약 관리 화면에서 [결제 등록] 클릭 시 고객 자동 선택(미등록 고객은 동의서 처리 후 신규 등록 및 임시 연락처 비우기) 및 시술 장바구니 세팅"""
+        self.load_customer_list()
+        self.load_menu_data()
+        self.load_designers()
+
+        res_id = payload.get("reservation_id")
+        cust_id = payload.get("customer_id")
+        target_cust = None
+
+        if cust_id:
+            target_cust = next((c for c in self.all_customers if int(c["id"]) == int(cust_id)), None)
+
+        # 미등록 고객인 경우: 개인정보 수집·이용 동의서 먼저 확인 후 정식 고객으로 등록
+        if target_cust is None:
+            guest_name = (payload.get("customer_name") or "").strip()
+            guest_phone = (payload.get("customer_phone") or "").strip()
+
+            if not guest_phone:
+                QTimer.singleShot(50, lambda: CustomAlertDialog(
+                    "연락처 필요",
+                    "미등록 고객의 전화번호가 없어 정식 고객 등록을 진행할 수 없습니다.\n예약 상세에서 연락처를 먼저 입력해 주세요.",
+                    self,
+                ).exec())
+                return
+
+            existing = next((c for c in self.all_customers if c["phone"] == guest_phone), None)
+            if existing:
+                if res_id:
+                    self.db_manager.link_reservation_to_customer(res_id, existing["id"])
+                target_cust = existing
+            else:
+                def _prompt_consent_and_proceed():
+                    consent_dialog = CustomConsentDialog(guest_name, guest_phone, self)
+                    if consent_dialog.exec() != QDialog.Accepted:
+                        CustomAlertDialog(
+                            "결제 중단",
+                            "개인정보 수집 및 이용 동의가 완료되지 않아 결제 등록을 취소합니다.",
+                            self,
+                        ).exec()
+                        return
+
+                    is_mkt = 1 if consent_dialog.chk_marketing.isChecked() else 0
+                    ok, err_msg = self.db_manager.add_customer(
+                        name=guest_name,
+                        phone=guest_phone,
+                        memo=payload.get("memo", ""),
+                        is_consent=1,
+                        is_marketing_consent=is_mkt,
+                    )
+                    if not ok:
+                        CustomAlertDialog("고객 등록 오류", err_msg, self).exec()
+                        return
+
+                    self.load_customer_list()
+                    new_cust = next((c for c in self.all_customers if c["phone"] == guest_phone), None)
+                    if new_cust:
+                        if res_id:
+                            self.db_manager.link_reservation_to_customer(res_id, new_cust["id"])
+                        self._apply_reservation_to_dashboard(payload, new_cust)
+
+                QTimer.singleShot(50, _prompt_consent_and_proceed)
+                return
+
+        self._apply_reservation_to_dashboard(payload, target_cust)
+
+    def _apply_reservation_to_dashboard(self, payload: dict, target_cust: dict):
+        """확정된 고객 정보와 예약 시술 항목을 결제 대시보드(Page 1)에 즉시 반영 (상태는 결제 완료 시까지 '예약완료' 유지)"""
+        self.pending_reservation_id = payload.get("reservation_id")
+
+        self.selected_customer = dict(target_cust)
+        self.lbl_info_name.setText(self.selected_customer["name"])
+        self.lbl_info_phone.setText(self.selected_customer["phone"])
+
+        combined_memo = payload.get("memo") or self.selected_customer.get("memo", "") or ""
+        self.txt_info_memo.setPlainText(combined_memo)
+
+        avail_prepaid = self.selected_customer.get("prepaid_balance", 0)
+        avail_point = self.selected_customer.get("point", 0)
+        self.lbl_avail_prepaid.setText(f"{avail_prepaid:,}원 중")
+        self.lbl_avail_point.setText(f"{avail_point:,}P 중")
+
+        user_id = payload.get("user_id")
+        if user_id:
+            d_idx = self.cb_designer.findData(user_id)
+            if d_idx >= 0:
+                self.cb_designer.setCurrentIndex(d_idx)
+
+        dur = int(payload.get("duration_minutes") or 30)
+        self.spn_duration.setValue(dur)
+
+        self.cart_items.clear()
+        self.payments_history.clear()
+        self._set_deduction_inputs(0, 0)
+        self.lbl_history_summary.setText("")
+        self.history_scroll.setVisible(False)
+
+        service_lookup = {}
+        for cat_name, svc_list in self.services_map.items():
+            for s in svc_list:
+                service_lookup[s["id"]] = (s, cat_name)
+
+        for sid in payload.get("service_ids", []):
+            if sid in service_lookup:
+                svc_obj, cat_name = service_lookup[sid]
+                self.add_to_cart(svc_obj, cat_name)
+
+        if not payload.get("service_ids"):
+            self.update_cart_table()
+
+        self.main_stack.setCurrentIndex(1)
+        self.page_changed.emit(True)

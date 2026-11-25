@@ -21,7 +21,7 @@ class DBManager:
         return conn
 
     def init_db(self):
-        """최신 10개 테이블 스키마 생성 및 기존 DB 호환 자동 마이그레이션 수행"""
+        """최신 11개 테이블 스키마 생성 및 기존 DB 호환 자동 마이그레이션 수행"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
@@ -185,6 +185,35 @@ class DBManager:
                 value TEXT NOT NULL,
                 updated_at DATETIME DEFAULT (datetime('now', 'localtime'))
             );
+            """)
+
+            # 11. 예약 (reservation)
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS reservation (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_id INTEGER,
+                guest_name TEXT DEFAULT '',
+                guest_phone TEXT DEFAULT '',
+                user_id INTEGER,
+                service_summary TEXT DEFAULT '',
+                service_ids_json TEXT DEFAULT '[]',
+                reserved_at DATETIME NOT NULL,
+                duration_minutes INTEGER NOT NULL DEFAULT 60,
+                status TEXT NOT NULL DEFAULT '예약완료',
+                memo TEXT DEFAULT '',
+                created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                updated_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                FOREIGN KEY (customer_id) REFERENCES customer(id) ON DELETE SET NULL,
+                FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE SET NULL
+            );
+            """)
+
+            # 이미 정식 고객이 연결된 예약의 임시 비회원 이름/연락처 일괄 정리
+            cursor.execute("""
+                UPDATE reservation
+                SET guest_name = '', guest_phone = ''
+                WHERE customer_id IS NOT NULL
+                  AND (COALESCE(guest_name, '') != '' OR COALESCE(guest_phone, '') != '');
             """)
 
             cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('point_rate_general', '10');")
@@ -1519,5 +1548,292 @@ class DBManager:
         except Exception as e:
             print(f"[DB Error] get_sales_csv_data: {e}")
             return []
+        finally:
+            conn.close()
+
+    # -------------------------------------------------------------
+    # Reservation (예약 관리) CRUD 및 중복 검증 헬퍼
+    # -------------------------------------------------------------
+    def get_active_services_with_duration(self):
+        """예약 모달용 활성 시술 목록 및 소요시간(분) 조회"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT s.id, c.name AS category_name, s.name, s.price, COALESCE(s.duration_minutes, 30)
+                FROM service s
+                JOIN category c ON s.category_id = c.id
+                WHERE s.is_active = 1 AND c.is_active = 1 AND c.name != '선결제'
+                ORDER BY c.display_order ASC, s.display_order ASC, s.id ASC
+            """)
+            return [{
+                "id": r[0],
+                "category_name": r[1],
+                "name": r[2],
+                "price": r[3],
+                "duration_minutes": r[4],
+            } for r in cursor.fetchall()]
+        except Exception as e:
+            print(f"[DB Error] get_active_services_with_duration: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def get_reservations(self, start_date: str, end_date: str, designer_id: str = "all",
+                         status: str = "all", query: str = ""):
+        """기간/디자이너/상태/검색어 조건별 예약 목록 조회 (삭제 고객 익명화 정보 포함 반영)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            sql = """
+                SELECT
+                    r.id,
+                    r.customer_id,
+                    COALESCE(c.name, NULLIF(r.guest_name, ''), '미등록 고객') AS customer_name,
+                    COALESCE(c.phone, r.guest_phone, '') AS customer_phone,
+                    CASE WHEN r.customer_id IS NULL THEN 1 ELSE 0 END AS is_guest,
+                    r.user_id,
+                    COALESCE(u.name, '미지정') AS designer_name,
+                    COALESCE(u.position, '') AS designer_position,
+                    COALESCE(r.service_summary, '') AS service_summary,
+                    COALESCE(r.service_ids_json, '[]') AS service_ids_json,
+                    strftime('%Y-%m-%d %H:%M', r.reserved_at) AS reserved_at,
+                    COALESCE(r.duration_minutes, 60) AS duration_minutes,
+                    COALESCE(r.status, '예약완료') AS status,
+                    COALESCE(r.memo, '') AS memo
+                FROM reservation r
+                LEFT JOIN customer c ON r.customer_id = c.id
+                LEFT JOIN user u ON r.user_id = u.id
+                WHERE strftime('%Y-%m-%d', r.reserved_at) BETWEEN ? AND ?
+            """
+            params = [start_date, end_date]
+
+            if designer_id and designer_id != "all":
+                sql += " AND r.user_id = ?"
+                params.append(int(designer_id))
+
+            if status and status != "all":
+                sql += " AND r.status = ?"
+                params.append(status)
+
+            if query:
+                sql += " AND (COALESCE(c.name, r.guest_name, '') LIKE ? OR COALESCE(c.phone, r.guest_phone, '') LIKE ?)"
+                q_param = f"%{query}%"
+                params.extend([q_param, q_param])
+
+            sql += " ORDER BY r.reserved_at ASC, r.id ASC"
+            cursor.execute(sql, params)
+
+            results = []
+            for r in cursor.fetchall():
+                d_name = r[6]
+                d_pos = r[7]
+                designer_display = f"{d_pos} {d_name}".strip() if d_pos and d_name != "미지정" else d_name
+                results.append({
+                    "id": r[0],
+                    "customer_id": r[1],
+                    "customer_name": r[2],
+                    "customer_phone": r[3],
+                    "is_guest": bool(r[4]),
+                    "user_id": r[5],
+                    "designer_name": d_name,
+                    "designer_display": designer_display,
+                    "service_summary": r[8],
+                    "service_ids_json": r[9],
+                    "reserved_at": r[10],
+                    "duration_minutes": r[11],
+                    "status": r[12],
+                    "memo": r[13],
+                })
+            return results
+        except Exception as e:
+            print(f"[DB Error] get_reservations: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def check_reservation_conflict(self, user_id: int, reserved_at_str: str,
+                                   duration_minutes: int, exclude_id: int = None) -> tuple[bool, str]:
+        """동일 디자이너의 겹치는 시간대 예약 존재 여부 확인 (취소/노쇼 제외)"""
+        if not user_id:
+            return False, ""
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            new_start = datetime.strptime(reserved_at_str[:16], "%Y-%m-%d %H:%M")
+            new_end = new_start + timedelta(minutes=int(duration_minutes))
+            date_str = new_start.strftime("%Y-%m-%d")
+
+            sql = """
+                SELECT
+                    r.id,
+                    COALESCE(c.name, r.guest_name, '고객') AS cust_name,
+                    strftime('%Y-%m-%d %H:%M', r.reserved_at) AS res_start,
+                    COALESCE(r.duration_minutes, 60) AS dur
+                FROM reservation r
+                LEFT JOIN customer c ON r.customer_id = c.id
+                WHERE r.user_id = ?
+                  AND strftime('%Y-%m-%d', r.reserved_at) = ?
+                  AND r.status NOT IN ('취소', '노쇼')
+            """
+            params = [int(user_id), date_str]
+            if exclude_id is not None:
+                sql += " AND r.id != ?"
+                params.append(int(exclude_id))
+
+            cursor.execute(sql, params)
+            for row in cursor.fetchall():
+                exist_start = datetime.strptime(row[2], "%Y-%m-%d %H:%M")
+                exist_end = exist_start + timedelta(minutes=int(row[3]))
+                if new_start < exist_end and new_end > exist_start:
+                    time_range = f"{exist_start.strftime('%H:%M')}~{exist_end.strftime('%H:%M')}"
+                    return True, f"해당 디자이너는 {time_range}에 '{row[1]}'님 예약이 이미 등록되어 있습니다."
+            return False, ""
+        except Exception as e:
+            print(f"[DB Error] check_reservation_conflict: {e}")
+            return False, ""
+        finally:
+            conn.close()
+
+    def add_reservation(self, customer_id, guest_name: str, guest_phone: str,
+                        user_id, service_summary: str, service_ids_json: str,
+                        reserved_at_str: str, duration_minutes: int,
+                        status: str = "예약완료", memo: str = "") -> tuple[bool, str]:
+        """신규 예약 등록"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            clean_guest_name = "" if customer_id else guest_name.strip()
+            clean_guest_phone = "" if customer_id else guest_phone.strip()
+
+            cursor.execute("""
+                INSERT INTO reservation (
+                    customer_id, guest_name, guest_phone, user_id,
+                    service_summary, service_ids_json, reserved_at,
+                    duration_minutes, status, memo
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                int(customer_id) if customer_id else None,
+                clean_guest_name,
+                clean_guest_phone,
+                int(user_id) if user_id else None,
+                service_summary.strip(),
+                service_ids_json,
+                reserved_at_str,
+                int(duration_minutes),
+                status,
+                memo.strip(),
+            ))
+            conn.commit()
+            return True, "예약이 등록되었습니다."
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] add_reservation: {e}")
+            return False, f"예약 등록 실패: {e}"
+        finally:
+            conn.close()
+
+    def update_reservation(self, reservation_id: int, customer_id, guest_name: str, guest_phone: str,
+                           user_id, service_summary: str, service_ids_json: str,
+                           reserved_at_str: str, duration_minutes: int,
+                           status: str, memo: str) -> tuple[bool, str]:
+        """기존 예약 수정 (정식 고객 연결 시 임시 guest_name/guest_phone 초기화)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            clean_guest_name = "" if customer_id else guest_name.strip()
+            clean_guest_phone = "" if customer_id else guest_phone.strip()
+
+            cursor.execute("""
+                UPDATE reservation
+                SET customer_id = ?,
+                    guest_name = ?,
+                    guest_phone = ?,
+                    user_id = ?,
+                    service_summary = ?,
+                    service_ids_json = ?,
+                    reserved_at = ?,
+                    duration_minutes = ?,
+                    status = ?,
+                    memo = ?,
+                    updated_at = datetime('now', 'localtime')
+                WHERE id = ?
+            """, (
+                int(customer_id) if customer_id else None,
+                clean_guest_name,
+                clean_guest_phone,
+                int(user_id) if user_id else None,
+                service_summary.strip(),
+                service_ids_json,
+                reserved_at_str,
+                int(duration_minutes),
+                status,
+                memo.strip(),
+                int(reservation_id),
+            ))
+            conn.commit()
+            return True, "예약 정보가 수정되었습니다."
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] update_reservation: {e}")
+            return False, f"예약 수정 실패: {e}"
+        finally:
+            conn.close()
+
+    def link_reservation_to_customer(self, reservation_id: int, customer_id: int) -> bool:
+        """미등록 고객 예약을 정식 고객 ID와 연결하고 임시 이름/연락처(guest_name, guest_phone)를 초기화"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE reservation
+                SET customer_id = ?,
+                    guest_name = '',
+                    guest_phone = '',
+                    updated_at = datetime('now', 'localtime')
+                WHERE id = ?
+            """, (int(customer_id), int(reservation_id)))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] link_reservation_to_customer: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def update_reservation_status(self, reservation_id: int, status: str) -> bool:
+        """예약 상태 단건 변경 (예약완료 / 방문완료 / 취소 / 노쇼)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE reservation
+                SET status = ?, updated_at = datetime('now', 'localtime')
+                WHERE id = ?
+            """, (status, int(reservation_id)))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] update_reservation_status: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def delete_reservation(self, reservation_id: int) -> bool:
+        """예약 삭제"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM reservation WHERE id = ?", (int(reservation_id),))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"[DB Error] delete_reservation: {e}")
+            return False
         finally:
             conn.close()

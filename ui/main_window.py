@@ -9,6 +9,7 @@ from PySide6.QtGui import QFont
 from core.backup_manager import BackupManager
 from ui.theme import Colors, Styles, get_icon, load_fonts
 from ui.customer_view import CustomerView
+from ui.booking_management_view import BookingManagementView
 from ui.sales_registration_view import SalesRegistrationView
 from ui.sales_cancel_view import SalesCancelView
 from ui.sales_analytics_view import SalesAnalyticsView
@@ -237,13 +238,15 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(logo_container)
 
         self.btn_customer = SidebarButton("  고객관리", "customer.svg")
+        self.btn_booking = SidebarButton("  예약관리", "reservation.svg")
         self.btn_sales_reg = SidebarButton("  결제등록", "sales_registration.svg")
         self.btn_sales_cancel = SidebarButton("  결제취소", "sales_cancel.svg")
         self.btn_sales_analysis = SidebarButton("  매출분석", "sales_statistics.svg")
         self.btn_setting = SidebarButton("  설정", "setting.svg")
 
         self.menu_buttons = [
-            self.btn_customer, 
+            self.btn_customer,
+            self.btn_booking,
             self.btn_sales_reg, 
             self.btn_sales_cancel, 
             self.btn_sales_analysis, 
@@ -251,11 +254,13 @@ class MainWindow(QMainWindow):
         ]
 
         sidebar_layout.addWidget(self.btn_customer)
+        sidebar_layout.addWidget(self.btn_booking)
         sidebar_layout.addWidget(self.btn_sales_reg)
         sidebar_layout.addWidget(self.btn_sales_cancel)
         sidebar_layout.addWidget(self.btn_sales_analysis)
 
         self.btn_customer.clicked.connect(self.show_customer_page)
+        self.btn_booking.clicked.connect(self.show_booking_page)
         self.btn_sales_reg.clicked.connect(self.show_sales_reg_page)
         self.btn_sales_cancel.clicked.connect(self.show_sales_cancel_page)
         self.btn_sales_analysis.clicked.connect(self.show_sales_analytics_page)
@@ -350,6 +355,9 @@ class MainWindow(QMainWindow):
         self.customer_page = CustomerView()
         self.stack.addWidget(self.customer_page)
 
+        self.booking_page = BookingManagementView()
+        self.stack.addWidget(self.booking_page)
+
         self.sales_reg_page = SalesRegistrationView()
         self.stack.addWidget(self.sales_reg_page)
 
@@ -385,6 +393,7 @@ class MainWindow(QMainWindow):
 
         self.btn_top_back.clicked.connect(self.handle_top_back_click)
 
+        self.booking_page.proceed_to_payment.connect(self.on_booking_proceed_to_payment)
         self.sales_reg_page.page_changed.connect(self.on_sales_reg_page_changed)
         self.customer_page.page_changed.connect(self.on_customer_page_changed)
 
@@ -425,6 +434,20 @@ class MainWindow(QMainWindow):
         self.btn_top_back.setVisible(is_in_detail)
 
         self.stack.setCurrentWidget(self.customer_page)
+
+    def show_booking_page(self):
+        self.btn_top_back.setVisible(False)
+        self.select_main_button(self.btn_booking)
+        for btn in self.sub_buttons:
+            btn.setChecked(False)
+        self.booking_page.reload_all()
+        self.stack.setCurrentWidget(self.booking_page)
+
+    def on_booking_proceed_to_payment(self, booking_payload: dict):
+        """예약 화면에서 [결제 등록] 클릭 시 결제등록 화면으로 이동 및 초기 데이터 전달"""
+        self.show_sales_reg_page()
+        if hasattr(self.sales_reg_page, "load_from_reservation"):
+            self.sales_reg_page.load_from_reservation(booking_payload)
 
     def show_sales_reg_page(self):
         self.select_main_button(self.btn_sales_reg)
