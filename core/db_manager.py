@@ -730,75 +730,91 @@ class DBManager:
     # -------------------------------------------------------------
     # Sales Cancel (결제 취소) 헬퍼
     # -------------------------------------------------------------
-    def get_sales_cancel_list(self, query: str = "", date_str: str = ""):
-        """결제 취소 화면용 목록 조회 (결제수단별 금액 상세 내역 및 선결제·포인트 내역 포함)"""
+    def get_sales_cancel_list(self, query: str = "", date_str: str = "", designer_id: str = "all", limit: int = 500):
+        """결제 취소 화면용 목록 조회 (JOIN 기반 고속 집계 및 검색/날짜/디자이너 필터)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            sql = """
+            where_clauses = ["1=1"]
+            params = []
+
+            if query:
+                where_clauses.append("(c.name LIKE ? OR c.phone LIKE ?)")
+                q_param = f"%{query}%"
+                params.extend([q_param, q_param])
+
+            if date_str:
+                where_clauses.append("strftime('%Y-%m-%d', v.visited_at) = ?")
+                params.append(date_str)
+
+            if designer_id and str(designer_id) != "all":
+                where_clauses.append("v.user_id = ?")
+                params.append(int(designer_id))
+
+            where_sql = " AND ".join(where_clauses)
+            limit_sql = f"LIMIT {int(limit)}" if (not date_str and not query and limit) else ""
+
+            sql = f"""
                 SELECT 
                     v.id AS visit_id,
                     c.id AS customer_id,
                     c.name AS customer_name,
                     c.phone AS customer_phone,
-                    COALESCE((
-                        SELECT GROUP_CONCAT(
-                            CASE 
-                                WHEN COALESCE(vs.quantity, 1) > 1 THEN s.name || ' (' || vs.quantity || '개)'
-                                ELSE s.name 
-                            END, '|||') 
-                        FROM visit_service vs 
-                        JOIN service s ON vs.service_id = s.id 
-                        WHERE vs.visit_id = v.id
-                    ), '-') AS services_raw,
-                    COALESCE((
-                        SELECT GROUP_CONCAT(DISTINCT payment_method) 
-                        FROM payment 
-                        WHERE visit_id = v.id
-                    ), '-') AS payment_methods,
+                    COALESCE(svc_agg.services_raw, '-') AS services_raw,
+                    COALESCE(pay_agg.payment_methods, '-') AS payment_methods,
                     v.total_amount,
                     strftime('%Y-%m-%d %H:%M', v.visited_at) AS visit_date,
-                    COALESCE((
-                        SELECT SUM(amount) 
-                        FROM point_history 
-                        WHERE visit_id = v.id AND type = 'EARN'
-                    ), 0) AS earned_point,
-                    COALESCE((
-                        SELECT SUM(ABS(amount)) 
-                        FROM point_history 
-                        WHERE visit_id = v.id AND type = 'USE'
-                    ), 0) AS used_point,
+                    COALESCE(pt_agg.earned_point, 0) AS earned_point,
+                    COALESCE(pt_agg.used_point, 0) AS used_point,
                     v.total_duration_minutes,
                     COALESCE(u.name, '-') AS designer_name,
                     COALESCE(u.position, '') AS designer_position,
                     COALESCE(v.used_prepaid, 0) AS used_prepaid,
-                    COALESCE((
-                        SELECT SUM(amount)
-                        FROM prepaid_history
-                        WHERE visit_id = v.id AND type = 'CHARGE'
-                    ), 0) AS charged_prepaid,
-                    COALESCE((
-                        SELECT GROUP_CONCAT(payment_method || '::' || amount, '|||')
-                        FROM payment
-                        WHERE visit_id = v.id
-                    ), '-') AS payment_details_raw
+                    COALESCE(pr_agg.charged_prepaid, 0) AS charged_prepaid,
+                    COALESCE(pay_agg.payment_details_raw, '-') AS payment_details_raw
                 FROM visit v
                 JOIN customer c ON v.customer_id = c.id
                 LEFT JOIN user u ON v.user_id = u.id
-                WHERE 1=1
+                LEFT JOIN (
+                    SELECT 
+                        vs.visit_id,
+                        GROUP_CONCAT(
+                            CASE 
+                                WHEN COALESCE(vs.quantity, 1) > 1 THEN s.name || ' (' || vs.quantity || '개)'
+                                ELSE s.name 
+                            END, '|||'
+                        ) AS services_raw
+                    FROM visit_service vs
+                    JOIN service s ON vs.service_id = s.id
+                    GROUP BY vs.visit_id
+                ) svc_agg ON svc_agg.visit_id = v.id
+                LEFT JOIN (
+                    SELECT 
+                        visit_id,
+                        GROUP_CONCAT(DISTINCT payment_method) AS payment_methods,
+                        GROUP_CONCAT(payment_method || '::' || amount, '|||') AS payment_details_raw
+                    FROM payment
+                    GROUP BY visit_id
+                ) pay_agg ON pay_agg.visit_id = v.id
+                LEFT JOIN (
+                    SELECT 
+                        visit_id,
+                        SUM(CASE WHEN type = 'EARN' THEN amount ELSE 0 END) AS earned_point,
+                        SUM(CASE WHEN type = 'USE' THEN ABS(amount) ELSE 0 END) AS used_point
+                    FROM point_history
+                    GROUP BY visit_id
+                ) pt_agg ON pt_agg.visit_id = v.id
+                LEFT JOIN (
+                    SELECT 
+                        visit_id,
+                        SUM(CASE WHEN type = 'CHARGE' THEN amount ELSE 0 END) AS charged_prepaid
+                    FROM prepaid_history
+                    GROUP BY visit_id
+                ) pr_agg ON pr_agg.visit_id = v.id
+                WHERE {where_sql}
+                ORDER BY v.visited_at DESC, v.id DESC
+                {limit_sql}
             """
-            params = []
-
-            if query:
-                sql += " AND (c.name LIKE ? OR c.phone LIKE ?)"
-                q_param = f"%{query}%"
-                params.extend([q_param, q_param])
-
-            if date_str:
-                sql += " AND strftime('%Y-%m-%d', v.visited_at) = ?"
-                params.append(date_str)
-
-            sql += " ORDER BY v.visited_at DESC, v.id DESC"
 
             cursor.execute(sql, params)
             rows = cursor.fetchall()
@@ -1118,8 +1134,125 @@ class DBManager:
             conn.close()
 
     # -------------------------------------------------------------
-    # 매출 통계 분석 헬퍼 메서드
+    # 매출 캘린더 & 상세 분석 헬퍼 메서드
     # -------------------------------------------------------------
+    def get_monthly_sales_calendar(self, year: int, month: int, designer_id: str = "all"):
+        """월간 매출 캘린더용 일별 매출액, 실매출액(선결제·포인트 사용 제외), 누적 매출액, 방문/예약/결제건 집계"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            days_in_month = calendar.monthrange(year, month)[1]
+            start_date = f"{year:04d}-{month:02d}-01"
+            end_date = f"{year:04d}-{month:02d}-{days_in_month:02d}"
+
+            params = [start_date, end_date]
+            designer_where = ""
+            res_designer_where = ""
+            if designer_id and designer_id != "all":
+                designer_where = " AND v.user_id = ? "
+                res_designer_where = " AND r.user_id = ? "
+                params.append(int(designer_id))
+
+            # 1. 일별 총매출액, 실매출액(선결제·포인트 사용분 차감), 방문 고객수, 결제건
+            cursor.execute(f"""
+                SELECT
+                    strftime('%Y-%m-%d', v.visited_at) AS dt,
+                    COALESCE(SUM(v.total_amount), 0) AS daily_sales,
+                    COALESCE(SUM(MAX(0, v.total_amount - COALESCE(v.used_prepaid, 0) - COALESCE(v.used_point, 0))), 0) AS daily_net_sales,
+                    COUNT(DISTINCT v.customer_id) AS visitor_count,
+                    COUNT(v.id) AS payment_count
+                FROM visit v
+                WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
+                GROUP BY dt
+                ORDER BY dt ASC
+            """, params)
+
+            raw_map = {}
+            for r in cursor.fetchall():
+                raw_map[r[0]] = {
+                    "daily_sales": int(r[1] or 0),
+                    "daily_net_sales": int(r[2] or 0),
+                    "visitor_count": int(r[3] or 0),
+                    "payment_count": int(r[4] or 0),
+                }
+
+            # 2. 일별 예약건수 (취소 제외)
+            cursor.execute(f"""
+                SELECT
+                    strftime('%Y-%m-%d', r.reserved_at) AS dt,
+                    COUNT(r.id) AS reservation_count
+                FROM reservation r
+                WHERE strftime('%Y-%m-%d', r.reserved_at) BETWEEN ? AND ?
+                  AND r.status != '취소' {res_designer_where}
+                GROUP BY dt
+                ORDER BY dt ASC
+            """, params)
+
+            res_map = {}
+            for r in cursor.fetchall():
+                res_map[r[0]] = int(r[1] or 0)
+
+            daily_map = {}
+            cumulative_sales = 0
+            cumulative_net_sales = 0
+            total_visitors = 0
+            total_reservations = 0
+            total_payments = 0
+
+            for day in range(1, days_in_month + 1):
+                dt_str = f"{year:04d}-{month:02d}-{day:02d}"
+                info = raw_map.get(dt_str, {
+                    "daily_sales": 0,
+                    "daily_net_sales": 0,
+                    "visitor_count": 0,
+                    "payment_count": 0
+                })
+                res_cnt = res_map.get(dt_str, 0)
+
+                cumulative_sales += info["daily_sales"]
+                cumulative_net_sales += info["daily_net_sales"]
+                total_visitors += info["visitor_count"]
+                total_reservations += res_cnt
+                total_payments += info["payment_count"]
+
+                daily_map[day] = {
+                    "date": dt_str,
+                    "daily_sales": info["daily_sales"],
+                    "daily_net_sales": info["daily_net_sales"],
+                    "cumulative_sales": cumulative_sales,
+                    "cumulative_net_sales": cumulative_net_sales,
+                    "visitor_count": info["visitor_count"],
+                    "reservation_count": res_cnt,
+                    "payment_count": info["payment_count"],
+                }
+
+            return {
+                "year": year,
+                "month": month,
+                "days_in_month": days_in_month,
+                "monthly_total_sales": cumulative_sales,
+                "monthly_total_net_sales": cumulative_net_sales,
+                "monthly_total_visitors": total_visitors,
+                "monthly_total_reservations": total_reservations,
+                "monthly_total_payments": total_payments,
+                "daily_map": daily_map,
+            }
+        except Exception as e:
+            print(f"[DB Error] get_monthly_sales_calendar: {e}")
+            return {
+                "year": year,
+                "month": month,
+                "days_in_month": calendar.monthrange(year, month)[1],
+                "monthly_total_sales": 0,
+                "monthly_total_net_sales": 0,
+                "monthly_total_visitors": 0,
+                "monthly_total_reservations": 0,
+                "monthly_total_payments": 0,
+                "daily_map": {},
+            }
+        finally:
+            conn.close()
+
     def get_daily_sales_analysis(self):
         """금일 매출 분석 4종 KPI 카드, 결제 수단별 금액/비율(카드/현금/선결제/포인트), 전월 대비 매출 비교 및 TOP3 시술 집계"""
         conn = self.get_connection()
@@ -1321,20 +1454,25 @@ class DBManager:
             conn.close()
 
     def get_period_sales_analysis(self, start_date: str, end_date: str, designer_id: str = "all"):
-        """기간별 상세 매출 분석 (1일=시간대별, ~31일=일별, ~180일=주별, ~1095일=월별, 그이상=년도별)"""
+        """기간별 상세 매출 분석 (총 매출액, 실매출액, 시술자 수, 예약자 수, 결제수단별 금액+이용자 수, 평균 기준 추이 데이터 포함)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             params = [start_date, end_date]
             is_all_designers = not designer_id or designer_id == "all"
             designer_where = ""
+            res_designer_where = ""
             if not is_all_designers:
                 designer_where = " AND v.user_id = ? "
-                params.append(designer_id)
+                res_designer_where = " AND r.user_id = ? "
+                params.append(int(designer_id))
 
+            # 1. 총매출액, 실매출액(선결제·포인트 사용 제외), 시술자 수, 결제건, 시술시간
             cursor.execute(f"""
                 SELECT 
                     COALESCE(SUM(v.total_amount), 0),
+                    COALESCE(SUM(MAX(0, v.total_amount - COALESCE(v.used_prepaid, 0) - COALESCE(v.used_point, 0))), 0),
+                    COUNT(DISTINCT v.customer_id),
                     COUNT(DISTINCT v.id),
                     COALESCE(SUM(v.total_duration_minutes), 0),
                     COALESCE(SUM(v.used_point), 0),
@@ -1343,17 +1481,30 @@ class DBManager:
                 WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
             """, params)
             sales_row = cursor.fetchone()
-            total_sales = sales_row[0]
-            visit_count = sales_row[1]
-            total_duration = sales_row[2]
-            v_used_point = sales_row[3]
-            v_used_prepaid = sales_row[4]
+            total_sales = int(sales_row[0] or 0)
+            net_sales = int(sales_row[1] or 0)
+            treated_customer_count = int(sales_row[2] or 0)
+            visit_count = int(sales_row[3] or 0)
+            total_duration = int(sales_row[4] or 0)
+            v_used_point = int(sales_row[5] or 0)
+            v_used_prepaid = int(sales_row[6] or 0)
+
+            # 2. 예약자 수 (취소 제외 유효 예약 건수)
+            cursor.execute(f"""
+                SELECT COUNT(r.id)
+                FROM reservation r
+                WHERE strftime('%Y-%m-%d', r.reserved_at) BETWEEN ? AND ?
+                  AND r.status != '취소' {res_designer_where}
+            """, params)
+            reserved_count = int(cursor.fetchone()[0] or 0)
 
             d1 = datetime.strptime(start_date, "%Y-%m-%d")
             d2 = datetime.strptime(end_date, "%Y-%m-%d")
-            days_span = (d2 - d1).days + 1
-            avg_daily_sales = int(total_sales / days_span) if days_span > 0 else 0
+            days_span = max(1, (d2 - d1).days + 1)
+            avg_daily_sales = int(total_sales / days_span)
+            avg_daily_net_sales = int(net_sales / days_span)
 
+            # 3. 매출 기여도
             if is_all_designers:
                 contribution = 100.0 if total_sales > 0 else 0.0
             else:
@@ -1362,48 +1513,70 @@ class DBManager:
                     FROM visit
                     WHERE strftime('%Y-%m-%d', visited_at) BETWEEN ? AND ?
                 """, (start_date, end_date))
-                all_store_sales = cursor.fetchone()[0]
+                all_store_sales = int(cursor.fetchone()[0] or 0)
                 if all_store_sales > 0:
                     contribution = round((total_sales / all_store_sales) * 100, 1)
                 else:
                     contribution = 100.0 if total_sales > 0 else 0.0
 
+            # 4. 결제 수단별 매출액 + 해당 수단 이용 고객 수(중복 제거)
             payments = {"카드": 0, "현금": 0, "선결제": 0, "포인트": 0}
+            payment_users = {"카드": set(), "현금": set(), "선결제": set(), "포인트": set()}
+
             cursor.execute(f"""
                 SELECT 
                     p.payment_method,
-                    COALESCE(SUM(p.amount), 0)
+                    COALESCE(p.amount, 0),
+                    v.customer_id
                 FROM payment p
                 JOIN visit v ON p.visit_id = v.id
                 WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
-                GROUP BY p.payment_method
             """, params)
 
-            for row in cursor.fetchall():
-                pm = (row[0] or "").lower()
-                amt = row[1] or 0
+            for pm_raw, amt_raw, cust_id in cursor.fetchall():
+                pm = (pm_raw or "").lower()
+                amt = int(amt_raw or 0)
+                if amt <= 0:
+                    continue
                 if "카드" in pm or "card" in pm:
-                    payments["카드"] += amt
+                    key = "카드"
                 elif "현금" in pm or "cash" in pm:
-                    payments["현금"] += amt
+                    key = "현금"
                 elif "선결제" in pm or "prepaid" in pm:
-                    payments["선결제"] += amt
+                    key = "선결제"
                 elif "포인트" in pm or "point" in pm or "적립" in pm:
-                    payments["포인트"] += amt
+                    key = "포인트"
                 else:
-                    payments["카드"] += amt
+                    key = "카드"
+                payments[key] += amt
+                if cust_id is not None:
+                    payment_users[key].add(cust_id)
+
+            cursor.execute(f"""
+                SELECT v.customer_id, COALESCE(v.used_point, 0), COALESCE(v.used_prepaid, 0)
+                FROM visit v
+                WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
+                  AND (COALESCE(v.used_point, 0) > 0 OR COALESCE(v.used_prepaid, 0) > 0)
+            """, params)
+            for cust_id, up, upr in cursor.fetchall():
+                if up > 0 and cust_id is not None:
+                    payment_users["포인트"].add(cust_id)
+                if upr > 0 and cust_id is not None:
+                    payment_users["선결제"].add(cust_id)
 
             if v_used_point > payments["포인트"]:
                 payments["포인트"] = v_used_point
             if v_used_prepaid > payments["선결제"]:
                 payments["선결제"] = v_used_prepaid
 
-            trend_data = []
+            payment_counts = {k: len(v) for k, v in payment_users.items()}
 
+            # 5. 추이 데이터
+            trend_data = []
             if days_span == 1:
                 query_params = [start_date]
                 if not is_all_designers:
-                    query_params.append(designer_id)
+                    query_params.append(int(designer_id))
 
                 cursor.execute(f"""
                     SELECT strftime('%H시', v.visited_at) as hr, COALESCE(SUM(v.total_amount), 0)
@@ -1412,9 +1585,9 @@ class DBManager:
                     GROUP BY hr ORDER BY hr ASC
                 """, query_params)
                 for r in cursor.fetchall():
-                    trend_data.append({"label": r[0], "amount": r[1]})
+                    trend_data.append({"label": r[0], "amount": int(r[1] or 0)})
 
-            elif days_span <= 31:
+            elif days_span <= 62:
                 cursor.execute(f"""
                     SELECT strftime('%Y-%m-%d', v.visited_at) as dt, COALESCE(SUM(v.total_amount), 0)
                     FROM visit v
@@ -1425,28 +1598,48 @@ class DBManager:
                 curr = d1
                 while curr <= d2:
                     dt_str = curr.strftime("%Y-%m-%d")
-                    trend_data.append({"label": dt_str[5:], "amount": rows.get(dt_str, 0)})
+                    trend_data.append({"label": dt_str[5:], "amount": int(rows.get(dt_str, 0) or 0)})
                     curr += timedelta(days=1)
 
             elif days_span <= 180:
                 cursor.execute(f"""
-                    SELECT strftime('%Y-%m월-%W주', v.visited_at) as wk, COALESCE(SUM(v.total_amount), 0)
+                    SELECT strftime('%Y-%W', v.visited_at) as wk, COALESCE(SUM(v.total_amount), 0)
                     FROM visit v
                     WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
                     GROUP BY wk ORDER BY wk ASC
                 """, params)
-                for r in cursor.fetchall():
-                    trend_data.append({"label": r[0][2:], "amount": r[1]})
+                wk_rows = dict(cursor.fetchall())
+
+                curr = d1
+                seen_weeks = set()
+                while curr <= d2:
+                    wk_key = curr.strftime("%Y-%W")
+                    if wk_key not in seen_weeks:
+                        seen_weeks.add(wk_key)
+                        week_of_month = (curr.day - 1) // 7 + 1
+                        label = f"{curr.month}월 {week_of_month}주"
+                        trend_data.append({"label": label, "amount": int(wk_rows.get(wk_key, 0) or 0)})
+                    curr += timedelta(days=1)
 
             elif days_span <= 1095:
                 cursor.execute(f"""
-                    SELECT strftime('%Y-%m월', v.visited_at) as mn, COALESCE(SUM(v.total_amount), 0)
+                    SELECT strftime('%Y-%m', v.visited_at) as mn, COALESCE(SUM(v.total_amount), 0)
                     FROM visit v
                     WHERE strftime('%Y-%m-%d', v.visited_at) BETWEEN ? AND ? {designer_where}
                     GROUP BY mn ORDER BY mn ASC
                 """, params)
-                for r in cursor.fetchall():
-                    trend_data.append({"label": r[0][2:], "amount": r[1]})
+                mn_rows = dict(cursor.fetchall())
+
+                curr_y, curr_m = d1.year, d1.month
+                while (curr_y, curr_m) <= (d2.year, d2.month):
+                    mn_key = f"{curr_y:04d}-{curr_m:02d}"
+                    label = f"{str(curr_y)[2:]}.{curr_m:02d}"
+                    trend_data.append({"label": label, "amount": int(mn_rows.get(mn_key, 0) or 0)})
+                    if curr_m == 12:
+                        curr_y += 1
+                        curr_m = 1
+                    else:
+                        curr_m += 1
 
             else:
                 cursor.execute(f"""
@@ -1456,25 +1649,46 @@ class DBManager:
                     GROUP BY yr ORDER BY yr ASC
                 """, params)
                 for r in cursor.fetchall():
-                    trend_data.append({"label": r[0], "amount": r[1]})
+                    trend_data.append({"label": r[0], "amount": int(r[1] or 0)})
+
+            chart_avg_sales = (
+                int(sum(item["amount"] for item in trend_data) / len(trend_data))
+                if trend_data else 0
+            )
 
             return {
                 "total_sales": total_sales,
+                "net_sales": net_sales,
+                "treated_customer_count": treated_customer_count,
+                "reserved_count": reserved_count,
                 "visit_count": visit_count,
                 "avg_daily_sales": avg_daily_sales,
+                "avg_daily_net_sales": avg_daily_net_sales,
+                "chart_avg_sales": chart_avg_sales,
                 "total_duration": total_duration,
                 "contribution": contribution,
                 "payments": payments,
+                "payment_counts": payment_counts,
                 "days_span": days_span,
-                "trend_data": trend_data
+                "trend_data": trend_data,
             }
         except Exception as e:
             print(f"[DB Error] get_period_sales_analysis: {e}")
             return {
-                "total_sales": 0, "visit_count": 0, "avg_daily_sales": 0,
-                "total_duration": 0, "contribution": 0.0,
+                "total_sales": 0,
+                "net_sales": 0,
+                "treated_customer_count": 0,
+                "reserved_count": 0,
+                "visit_count": 0,
+                "avg_daily_sales": 0,
+                "avg_daily_net_sales": 0,
+                "chart_avg_sales": 0,
+                "total_duration": 0,
+                "contribution": 0.0,
                 "payments": {"카드": 0, "현금": 0, "선결제": 0, "포인트": 0},
-                "days_span": 1, "trend_data": []
+                "payment_counts": {"카드": 0, "현금": 0, "선결제": 0, "포인트": 0},
+                "days_span": 1,
+                "trend_data": [],
             }
         finally:
             conn.close()

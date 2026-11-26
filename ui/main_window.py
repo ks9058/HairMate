@@ -2,9 +2,9 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
     QPushButton, QLabel, QStackedWidget, QFrame, QSizePolicy,
-    QDialog, QProgressBar
+    QDialog, QProgressBar, QDateEdit
 )
-from PySide6.QtCore import Qt, QSize, QThread, Signal, QTimer
+from PySide6.QtCore import Qt, QSize, QThread, Signal, QTimer, QDate
 from PySide6.QtGui import QFont
 from core.backup_manager import BackupManager
 from ui.theme import Colors, Styles, get_icon, load_fonts
@@ -199,6 +199,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._is_closing_with_backup = False
         self._backup_in_progress = False
+        self._sales_cancel_from_calendar = False
+        self._return_calendar_ym = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -396,6 +398,7 @@ class MainWindow(QMainWindow):
         self.booking_page.proceed_to_payment.connect(self.on_booking_proceed_to_payment)
         self.sales_reg_page.page_changed.connect(self.on_sales_reg_page_changed)
         self.customer_page.page_changed.connect(self.on_customer_page_changed)
+        self.sales_analytics_page.calendar_date_selected.connect(self.on_calendar_date_selected)
 
         self.show_customer_page()
 
@@ -411,6 +414,11 @@ class MainWindow(QMainWindow):
             self.sales_reg_page.confirm_and_clear_selection()
         elif current_widget == self.customer_page:
             self.customer_page.reset_form()
+        elif current_widget == self.sales_cancel_page and self._sales_cancel_from_calendar:
+            ym = self._return_calendar_ym
+            self._sales_cancel_from_calendar = False
+            self._return_calendar_ym = None
+            self.show_sales_analytics_page(target_ym=ym)
 
     def on_sales_reg_page_changed(self, is_in_dashboard: bool):
         if self.stack.currentWidget() == self.sales_reg_page:
@@ -420,11 +428,52 @@ class MainWindow(QMainWindow):
         if self.stack.currentWidget() == self.customer_page:
             self.btn_top_back.setVisible(is_in_detail)
 
+    def on_calendar_date_selected(self, date_str: str):
+        """매출 캘린더에서 특정 날짜 클릭 시 해당 일자 및 디자이너 조건으로 결제취소 화면 이동"""
+        qdate = QDate.fromString(date_str, "yyyy-MM-dd")
+        if not qdate.isValid():
+            return
+
+        self._sales_cancel_from_calendar = True
+        self._return_calendar_ym = (qdate.year(), qdate.month())
+
+        self.select_main_button(self.btn_sales_cancel)
+        for btn in self.sub_buttons:
+            btn.setChecked(False)
+
+        # 매출 분석 화면에서 선택된 디자이너 ID 추출
+        if self.sales_analytics_page.stack.currentIndex() == 0:
+            selected_designer_id = self.sales_analytics_page.cb_cal_designer.currentData()
+        else:
+            selected_designer_id = self.sales_analytics_page.cb_designer.currentData()
+
+        if selected_designer_id is None:
+            selected_designer_id = "all"
+
+        self.sales_cancel_page.apply_calendar_filter(date_str, selected_designer_id)
+
+        self.btn_top_back.setVisible(True)
+        self.stack.setCurrentWidget(self.sales_cancel_page)
+
+        # SalesCancelView 내부의 QDateEdit 위젯을 변수명과 무관하게 직접 찾아 날짜 설정
+        date_widget = self.sales_cancel_page.findChild(QDateEdit)
+        if date_widget is not None:
+            date_widget.blockSignals(True)
+            date_widget.setDate(qdate)
+            date_widget.blockSignals(False)
+
+        # 날짜 필터를 활성화한 상태로 데이터 조회 실행
+        self.sales_cancel_page.load_sales_data(use_date_filter=True)
+
+        self.btn_top_back.setVisible(True)
+        self.stack.setCurrentWidget(self.sales_cancel_page)
+
     def select_main_button(self, target_btn):
         for btn in self.menu_buttons:
             btn.setChecked(btn == target_btn)
 
     def show_customer_page(self):
+        self._sales_cancel_from_calendar = False
         self.select_main_button(self.btn_customer)
         for btn in self.sub_buttons:
             btn.setChecked(False)
@@ -436,6 +485,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.customer_page)
 
     def show_booking_page(self):
+        self._sales_cancel_from_calendar = False
         self.btn_top_back.setVisible(False)
         self.select_main_button(self.btn_booking)
         for btn in self.sub_buttons:
@@ -450,6 +500,7 @@ class MainWindow(QMainWindow):
             self.sales_reg_page.load_from_reservation(booking_payload)
 
     def show_sales_reg_page(self):
+        self._sales_cancel_from_calendar = False
         self.select_main_button(self.btn_sales_reg)
         for btn in self.sub_buttons:
             btn.setChecked(False)
@@ -463,6 +514,8 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.sales_reg_page)
 
     def show_sales_cancel_page(self):
+        self._sales_cancel_from_calendar = False
+        self._return_calendar_ym = None
         self.btn_top_back.setVisible(False)
         self.select_main_button(self.btn_sales_cancel)
         for btn in self.sub_buttons:
@@ -470,14 +523,17 @@ class MainWindow(QMainWindow):
         self.sales_cancel_page.load_sales_data(use_date_filter=False)
         self.stack.setCurrentWidget(self.sales_cancel_page)
 
-    def show_sales_analytics_page(self):
+    def show_sales_analytics_page(self, checked: bool = False, target_ym: tuple = None):
+        self._sales_cancel_from_calendar = False
         self.btn_top_back.setVisible(False)
         self.select_main_button(self.btn_sales_analysis)
         for btn in self.sub_buttons:
             btn.setChecked(False)
         
         self.sales_analytics_page.load_designers()
-        if self.sales_analytics_page.stack.currentIndex() == 0:
+        if target_ym and len(target_ym) == 2:
+            self.sales_analytics_page.set_calendar_year_month(target_ym[0], target_ym[1])
+        elif self.sales_analytics_page.stack.currentIndex() == 0:
             self.sales_analytics_page.refresh_daily_analysis()
         else:
             self.sales_analytics_page.refresh_period_analysis()
@@ -485,6 +541,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.sales_analytics_page)
 
     def select_sub_button(self, target_btn):
+        self._sales_cancel_from_calendar = False
         self.btn_top_back.setVisible(False)
         for btn in self.sub_buttons:
             btn.setChecked(btn == target_btn)
