@@ -1,11 +1,12 @@
+import os
 import re
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-    QFrame, QDialog, QAbstractItemView, QDateEdit, QToolTip
+    QFrame, QDialog, QAbstractItemView, QDateEdit, QToolTip, QComboBox
 )
 from PySide6.QtCore import Qt, QDate
-from PySide6.QtGui import QFont, QCursor, QColor, QPainterPath, QTextDocument
+from PySide6.QtGui import QFont, QCursor, QColor, QPainterPath, QTextDocument, QPainter, QPen, QPixmap
 from ui.theme import Colors, get_icon
 from core.db_manager import DBManager
 from core.sms_service import SmsSendWorker, build_prepaid_cancel_sms_payloads
@@ -35,6 +36,36 @@ SCROLLBAR_STYLE = """
         background: none;
     }
 """
+
+
+def get_resource_arrow_path(direction: str = "down") -> str:
+    """프로젝트 루트의 resources 폴더에 깔끔한 화살표 PNG를 생성하고 절대 경로 반환"""
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    res_dir = os.path.join(project_root, "resources")
+    os.makedirs(res_dir, exist_ok=True)
+
+    file_path = os.path.join(res_dir, f"arrow_{direction}.png")
+    if not os.path.exists(file_path):
+        pixmap = QPixmap(24, 24)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor("#444444"), 2)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+
+        if direction == "down":
+            painter.drawLine(5, 9, 12, 16)
+            painter.drawLine(12, 16, 19, 9)
+        elif direction == "up":
+            painter.drawLine(5, 15, 12, 8)
+            painter.drawLine(12, 8, 19, 15)
+
+        painter.end()
+        pixmap.save(file_path, "PNG")
+
+    return file_path.replace("\\", "/")
 
 
 class RoundedHeader(QHeaderView):
@@ -188,16 +219,19 @@ class SalesCancelView(QWidget):
         self.db_manager = DBManager()
         self.sales_list = []
         self.selected_sale = None
-        self.is_date_filter_active = True
+        self.is_date_filter_active = False
         self._sms_workers = []
 
         self.setup_ui()
-        self.load_sales_data()
+        self.load_designers()
+        self.load_sales_data(use_date_filter=False)
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(25, 15, 25, 25)
         main_layout.setSpacing(15)
+
+        arrow_down_path = get_resource_arrow_path("down")
 
         outer_container = QFrame(self)
         outer_container.setStyleSheet("background-color: #DCDCDC; border-radius: 10px;")
@@ -207,10 +241,11 @@ class SalesCancelView(QWidget):
         outer_layout.setContentsMargins(8, 8, 8, 8)
         outer_layout.setSpacing(8)
 
-        # 1. 상단 필터 영역
+        # 1. 상단 필터 영역 (이름/전화번호 검색 + 디자이너 선택 + 결제일 선택 + 전체보기)
         filter_layout = QHBoxLayout()
-        filter_layout.setSpacing(15)
+        filter_layout.setSpacing(12)
 
+        # (1) 검색 박스
         search_box = QFrame(outer_container)
         search_box.setFixedHeight(42)
         search_box.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
@@ -233,6 +268,58 @@ class SalesCancelView(QWidget):
         search_l.addWidget(lbl_search_icon)
         search_l.addWidget(self.txt_search, 1)
 
+        # (2) 디자이너 필터 박스
+        designer_box = QFrame(outer_container)
+        designer_box.setFixedHeight(42)
+        designer_box.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
+        designer_box.setAttribute(Qt.WA_StyledBackground, True)
+
+        designer_l = QHBoxLayout(designer_box)
+        designer_l.setContentsMargins(12, 0, 12, 0)
+        designer_l.setSpacing(10)
+
+        lbl_designer_title = QLabel("디자이너 :", designer_box)
+        lbl_designer_title.setFont(QFont("Inter", 11, QFont.Bold))
+        lbl_designer_title.setStyleSheet("background: transparent; color: #333333;")
+
+        self.cb_designer = QComboBox(designer_box)
+        self.cb_designer.setFixedHeight(30)
+        self.cb_designer.setMinimumWidth(145)
+        self.cb_designer.setFont(QFont("Inter", 11))
+        self.cb_designer.setStyleSheet(f"""
+            QComboBox {{
+                border: none;
+                background: transparent;
+                color: #000000;
+                padding-left: 4px;
+                padding-right: 20px;
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: border;
+                subcontrol-position: center right;
+                width: 20px;
+                border: none;
+                background: transparent;
+            }}
+            QComboBox::down-arrow {{
+                image: url("{arrow_down_path}");
+                width: 11px;
+                height: 11px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #FFFFFF;
+                color: #000000;
+                border: 1px solid #B0B0B0;
+                selection-background-color: #E8F5E9;
+                selection-color: #000000;
+            }}
+        """)
+        self.cb_designer.currentIndexChanged.connect(self.on_designer_filter_changed)
+
+        designer_l.addWidget(lbl_designer_title)
+        designer_l.addWidget(self.cb_designer, 1)
+
+        # (3) 결제일 필터 박스
         date_box = QFrame(outer_container)
         date_box.setFixedHeight(42)
         date_box.setStyleSheet("background-color: #FFFFFF; border-radius: 6px;")
@@ -352,8 +439,9 @@ class SalesCancelView(QWidget):
         date_l.addWidget(self.date_filter, 1)
         date_l.addWidget(btn_clear_date)
 
-        filter_layout.addWidget(search_box, 1)
-        filter_layout.addWidget(date_box, 1)
+        filter_layout.addWidget(search_box, 3)
+        filter_layout.addWidget(designer_box, 2)
+        filter_layout.addWidget(date_box, 3)
         outer_layout.addLayout(filter_layout)
 
         # 2. 결제 목록 테이블
@@ -453,6 +541,59 @@ class SalesCancelView(QWidget):
 
         self.update_delete_button_state(False)
 
+    # -------------------------------------------------------------
+    # 디자이너 필터 및 매출 캘린더 연동
+    # -------------------------------------------------------------
+    def load_designers(self):
+        curr_val = self.cb_designer.currentData()
+        designers = self.db_manager.get_all_designers()
+        self.cb_designer.blockSignals(True)
+        self.cb_designer.clear()
+        self.cb_designer.addItem("전체 디자이너", "all")
+        for d in designers:
+            pos = (d.get("position") or "").strip()
+            label = f"{d['name']} ({pos})" if pos else d["name"]
+            self.cb_designer.addItem(label, d["id"])
+        if curr_val is not None:
+            idx = self.cb_designer.findData(curr_val)
+            if idx >= 0:
+                self.cb_designer.setCurrentIndex(idx)
+        self.cb_designer.blockSignals(False)
+
+    def apply_calendar_filter(self, date_str: str, designer_id="all"):
+        """매출 캘린더에서 특정 날짜 클릭 진입 시 날짜와 디자이너 필터를 동시에 적용"""
+        self.load_designers()
+
+        self.txt_search.blockSignals(True)
+        self.txt_search.clear()
+        self.txt_search.blockSignals(False)
+
+        target_id_str = str(designer_id) if designer_id is not None else "all"
+        matched_idx = 0
+        for i in range(self.cb_designer.count()):
+            if str(self.cb_designer.itemData(i)) == target_id_str:
+                matched_idx = i
+                break
+
+        self.cb_designer.blockSignals(True)
+        self.cb_designer.setCurrentIndex(matched_idx)
+        self.cb_designer.blockSignals(False)
+
+        qdate = QDate.fromString(date_str, "yyyy-MM-dd")
+        if qdate.isValid():
+            self.date_filter.blockSignals(True)
+            self.date_filter.setDate(qdate)
+            self.date_filter.blockSignals(False)
+            self.load_sales_data(use_date_filter=True)
+        else:
+            self.load_sales_data(use_date_filter=False)
+
+    def on_designer_filter_changed(self):
+        self.load_sales_data()
+
+    # -------------------------------------------------------------
+    # 툴팁 및 버튼 상태 제어
+    # -------------------------------------------------------------
     @staticmethod
     def _build_list_tooltip(items: list[str]) -> str:
         formatted_items = "<br>".join([f"• {item}" for item in items])
@@ -504,10 +645,18 @@ class SalesCancelView(QWidget):
 
     def reset_date_filter(self):
         self.is_date_filter_active = False
+        self.txt_search.blockSignals(True)
+        self.txt_search.clear()
+        self.txt_search.blockSignals(False)
+
+        self.cb_designer.blockSignals(True)
+        self.cb_designer.setCurrentIndex(0)
+        self.cb_designer.blockSignals(False)
+
         self.date_filter.blockSignals(True)
         self.date_filter.setDate(QDate.currentDate())
         self.date_filter.blockSignals(False)
-        self.load_sales_data()
+        self.load_sales_data(use_date_filter=False)
 
     def load_sales_data(self, use_date_filter: bool = None):
         if use_date_filter is not None:
@@ -515,14 +664,20 @@ class SalesCancelView(QWidget):
 
         query = self.txt_search.text().strip()
         date_str = self.date_filter.date().toString("yyyy-MM-dd") if self.is_date_filter_active else ""
+        designer_id = self.cb_designer.currentData() or "all"
 
-        self.sales_list = self.db_manager.get_sales_cancel_list(query=query, date_str=date_str)
+        self.sales_list = self.db_manager.get_sales_cancel_list(
+            query=query,
+            date_str=date_str,
+            designer_id=str(designer_id)
+        )
         self.render_table()
 
     def filter_sales_data(self):
         self.load_sales_data()
 
     def render_table(self):
+        self.table.setUpdatesEnabled(False)
         self.table.setRowCount(0)
         self.selected_sale = None
         self.update_delete_button_state(False)
@@ -594,6 +749,8 @@ class SalesCancelView(QWidget):
             item_des = QTableWidgetItem(sale["designer_info"])
             item_des.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(idx, 9, item_des)
+
+        self.table.setUpdatesEnabled(True)
 
     def on_selection_changed(self):
         selected_items = self.table.selectedItems()
